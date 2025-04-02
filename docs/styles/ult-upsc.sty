@@ -1,0 +1,37 @@
+% Copyright (c) 2015 Erlend Graff <erlend.graff@gmail.com>
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{ult-upsc}[2016/08/18 v1.2a UiT LaTeX template upsc macro]
+
+\RequirePackage{xparse}
+\RequirePackage{expl3}
+
+\@ifpackagelater{expl3}{2017/05/29}
+{%
+  % l3regex package was deprecated, after functionality was embedded into expl3 package
+  % See http://www.tug.org/svn/texlive?limit_changes=0&view=revision&revision=44483
+}%
+{%
+  \RequirePackage{l3regex}
+}%
+
+% Magic to define \upsc{} command that replaces upper-case letters with lower-case small-caps
+\ExplSyntaxOn
+\cs_generate_variant:Nn \tl_rescan:nn { nV }
+\NewDocumentCommand \@@upsc { m }
+  {
+    \tl_set:Nx \l_tmpa_tl {#1}
+    \regex_replace_all:nnN { ([A-Z]+) }
+      { \c{textsc} \cB\{ \c{lowercase} \cB\{ \1 \cE\} \cE\} } \l_tmpa_tl
+    \tl_use:N \l_tmpa_tl
+  }
+\ExplSyntaxOff
+
+
+\newcommand{\upsc}[1]{%
+  \begingroup
+    \expandafter{\protect\@@upsc{#1}}%
+  \endgroup
+}
+
+\endinput

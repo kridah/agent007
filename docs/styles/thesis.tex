@@ -1,0 +1,104 @@
+%!TEX root = thesis.tex
+
+%:-------------------------- Preamble -----------------------
+
+% Three languages are supported, which will be reflected in the logo on the front page. Pass the appropriate language
+% specified as a class option to uit-thesis. Passing any other languages supported by babel will result in the default
+% language on the frontpage. If no language is passed, the default is selected.
+%  - USenglish (default)
+%  - norsk
+%  - samin
+% The frontpage comes in two variants, Master's thesis and PhD. Master is default, use classoption 'phd' for the PhD version.
+
+
+\documentclass[noprint,norsk]{uit-thesis}
+\usepackage{wrapfig} % wraptable
+\usepackage{makeidx} % stikkordsregister - bruk \index{} rundt ord for å få det i stikkordsregister
+\usepackage{mathtools}
+\usepackage{filecontents,listings,graphicx,varwidth}
+\usepackage[utf8]{inputenc}
+\usepackage[title,titletoc,toc,page]{appendix}
+\usepackage{mdframed} % for rammer rundt figurer
+% EKS:
+% \begin{figure}
+%    \begin{mdframed}
+%        \centering
+%        \includegraphics[størrelsen på bildet]{filbane}
+%    \end{mdframed} 
+%    \caption{Bildetekst}
+%    \label{Lable for referering}
+%\end{figure}
+
+
+%\makeindex % stikkordregister
+% Add external glossaryentries
+
+%\loadglsentries{uit-thesis-master/content/acronyms}
+%\makeglossaries
+
+
+\begin{document}
+
+%:-------------------------- Frontpage ------------------------
+
+\title{Oppgavens tittel}
+\subtitle{Undertittel}			% Optional
+\author{Dahl, Kristoffer Sørvang}
+\thesisfaculty{Handelshøgskolen ved UiT}
+\thesisprogramme{Emne, dato}
+
+\maketitle
+
+%:-------------------------- Frontmatter -----------------------
+
+\frontmatter
+% Tabell med metadata om dokumentet
+%\include{uit-thesis-master/content/00_table}%
+% Forord
+%\include{uit-thesis-master/content/0_forord}
+%\include{uit-thesis-master/content/dedication}
+\begingroup
+\let\cleardoublepage\relax
+%\include{uit-thesis-master/content/0_oppgavetekst}  % se kommentar/ review
+%\include{uit-thesis-master/content/abstract}
+\endgroup
+\selectlanguage{norsk}
+
+%\include{uit-thesis-master/content/0_versions}
+% abstract
+%\include{uit-thesis-master/content/abstract}
+
+% acknowledgement aka takksigelser
+%\include{uit-thesis-master/content/acknowledgement}
+
+% innholdsfortegnelse (automagic)
+\tableofcontents
+
+%:-------------------------- Mainmatter -----------------------
+\mainmatter
+% inkluder filer med kapitler (\chapter)
+% Innholdsfortegnelse
+% Sammendrag
+% 1 Introduksjon og relevans
+\include{uit-thesis-master/content/1_introduksjon}
+% 2 Teori: drøfting av mulige teknologier og utviklingsmetoder
+%\include{uit-thesis-master/content/2_teori}
+% 3 Valg av teknologi og utviklingsmetode
+%\include{uit-thesis-master/content/3_teknologivalg}
+% 4 Resultater
+%\include{uit-thesis-master/content/4_resultater}
+% 5 Diskusjon
+%\include{uit-thesis-master/content/5_diskusjon}
+% 6 Konklusjon og videre arbeid
+%\include{uit-thesis-master/content/6_konklusjon}
+
+% 7 Referanser
+\bibliography{uit-thesis-master/content/bibliography.bib}
+
+% Appendix
+%\include{uit-thesis-master/content/2_xxx}
+
+% baksidegrafikk
+\backmatter
+\end{document}  % setter inn siste side
+

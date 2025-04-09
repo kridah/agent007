@@ -4,4 +4,59 @@
 
 <h1>Hello, world!</h1>
 
+<h2>Subnode Performance Dashboard</h2>
 
+<div>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Subnode ID</th>
+                <th>Status</th>
+                <th>Response Time</th>
+                <th>Resource Usage</th>
+                <th>Error Rate</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var subnode in subnodePerformanceMetrics)
+            {
+                <tr>
+                    <td>@subnode.Id</td>
+                    <td>@subnode.Status</td>
+                    <td>@subnode.ResponseTime</td>
+                    <td>@subnode.ResourceUsage</td>
+                    <td>@subnode.ErrorRate</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    private List<SubnodePerformanceMetric> subnodePerformanceMetrics = new List<SubnodePerformanceMetric>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Fetch performance metrics from the service
+        subnodePerformanceMetrics = await FetchSubnodePerformanceMetrics();
+    }
+
+    private Task<List<SubnodePerformanceMetric>> FetchSubnodePerformanceMetrics()
+    {
+        // Simulate fetching performance metrics
+        return Task.FromResult(new List<SubnodePerformanceMetric>
+        {
+            new SubnodePerformanceMetric { Id = "1", Status = "Healthy", ResponseTime = "100ms", ResourceUsage = "50%", ErrorRate = "0%" },
+            new SubnodePerformanceMetric { Id = "2", Status = "Healthy", ResponseTime = "120ms", ResourceUsage = "60%", ErrorRate = "1%" }
+        });
+    }
+
+    private class SubnodePerformanceMetric
+    {
+        public string Id { get; set; }
+        public string Status { get; set; }
+        public string ResponseTime { get; set; }
+        public string ResourceUsage { get; set; }
+        public string ErrorRate { get; set; }
+    }
+}

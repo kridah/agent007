@@ -1,6 +1,9 @@
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using src.Data;
+using src.Services;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -8,6 +11,10 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
 builder.Services.AddSingleton<WeatherForecastService>();
+builder.Services.AddSingleton<LLMService>();
+builder.Services.AddSignalR();
+builder.Services.AddHealthChecks()
+    .AddCheck("SubNodeHealthCheck", () => HealthCheckResult.Healthy("SubNode is healthy"));
 
 var app = builder.Build();
 
@@ -25,7 +32,12 @@ app.UseStaticFiles();
 
 app.UseRouting();
 
-app.MapBlazorHub();
-app.MapFallbackToPage("/_Host");
+app.UseEndpoints(endpoints =>
+{
+    endpoints.MapBlazorHub();
+    endpoints.MapHub<LLMService>("/llmHub");
+    endpoints.MapHealthChecks("/health");
+    endpoints.MapFallbackToPage("/_Host");
+});
 
 app.Run();

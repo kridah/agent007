@@ -1,0 +1,45 @@
+@page "/ollamamodels"
+@using src.Data
+@inject OllamaService OService
+@using OllamaSharp.Models as OllamaModels
+
+<PageTitle>Ollama Models</PageTitle>
+
+<h2>Models available locally</h2>
+@if (models == null)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Model</th>
+                <th>Version</th>
+                <th>Digest</th>
+                <th>Format</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var model in models)
+            {
+                <tr>
+                    <td>@model.Name</td>
+                    <td>@model.Size</td>
+                    <td>@model.Digest</td>
+                    <td>@model.Details.Format</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+
+    private IEnumerable<Model> models;
+    protected override async Task OnInitializedAsync()
+    {
+        models = await OService.ListModelsAsync();
+    }
+}

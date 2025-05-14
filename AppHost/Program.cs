@@ -1,8 +1,5 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
-var ollamaApi = builder.AddProject<Projects.OllamaApi>("ollama-api");
-var openAiApi = builder.AddProject<Projects.src>("webapp")
-    .WithReference(ollamaApi);
-
+var webapp = builder.AddProject<Projects.src>("webapp");
 
 builder.Build().Run();

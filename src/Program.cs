@@ -1,5 +1,4 @@
-using Microsoft.AspNetCore.Components;
-using Microsoft.AspNetCore.Components.Web;
+using src;
 using src.Data;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -9,6 +8,8 @@ builder.AddServiceDefaults();
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
 builder.Services.AddSingleton<WeatherForecastService>();
+builder.Services.Configure<OllamaSettings>(builder.Configuration.GetSection("Ollama"));
+builder.Services.AddSingleton<OllamaService>();
 
 var app = builder.Build();
 

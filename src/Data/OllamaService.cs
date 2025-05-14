@@ -11,8 +11,9 @@ public class OllamaService
     private readonly ILogger<OllamaService> _logger;
     private readonly OllamaApiClient _client;
 
-    public OllamaService(IOptions<OllamaSettings> options)
+    public OllamaService(IOptions<OllamaSettings> options, ILogger<OllamaService> logger)
     {
+        _logger = logger;
         _client = new OllamaApiClient(options.Value.BaseUrl);
     }
     

@@ -22,6 +22,7 @@ else
                     <th>Model Size</th>
                     <th>Parameter Size</th>
                     <th>Quantization</th>
+                    <th>Delete</th>
                 </tr>
             </thead>
             <tbody>
@@ -34,6 +35,11 @@ else
                         <td>@($"{model.Size / 1000000f:F2} MB")</td>
                         <td>@(model.Details.ParameterSize)</td>
                         <td>@(model.Details.QuantizationLevel)</td>
+                        <td>
+                            <button class="btn btn-danger" @onclick="() => DeleteModel(model.Name)">
+                                <i class="oi oi-trash"></i> Delete
+                            </button>
+                        </td>
                     </tr>
                 }
             </tbody>
@@ -164,6 +170,28 @@ else
         }
         
         downloadingModel = "";
+        await LoadData(); // Refresh the lists
+    }
+
+    private async Task DeleteModel(string modelName)
+    {
+        statusMessage = $"Deleting {modelName}...";
+        statusAlertClass = "alert-info";
+        StateHasChanged();
+        
+        var result = await OService.DeleteModelAsync(modelName);
+        
+        if (result.Success)
+        {
+            statusMessage = $"Successfully deleted {modelName}";
+            statusAlertClass = "alert-success";
+        }
+        else
+        {
+            statusMessage = $"Error deleting {modelName}: {result.Message}";
+            statusAlertClass = "alert-danger";
+        }
+        
         await LoadData(); // Refresh the lists
     }
     

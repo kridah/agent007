@@ -1,0 +1,246 @@
+@page "/templates"
+@using System.Text.Json
+@using src.Data
+@using src.Shared
+@inject OllamaService OllamaService
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Ollama Templates</PageTitle>
+
+<h1>Template Management</h1>
+
+<div class="container">
+    <div class="row">
+        <div class="col-md-4">
+            <div class="template-list">
+                <h3>Available Templates</h3>
+                <div class="list-group">
+                    @foreach (var templateName in savedTemplates.Keys)
+                    {
+                        <button class="list-group-item list-group-item-action @(selectedTemplateName == templateName ? "active" : "")"
+                                @onclick="() => SelectTemplate(templateName)">
+                            @templateName
+                        </button>
+                    }
+                </div>
+                <div class="mt-3">
+                    <button class="btn btn-outline-primary" @onclick="CreateNewTemplate">New Template</button>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-8">
+            <div class="template-editor">
+                <h3>@(isNewTemplate ? "New Template" : "Edit Template")</h3>
+                <div class="form-group">
+                    <label for="templateName">Template Name:</label>
+                    <input type="text" id="templateName" class="form-control" @bind="templateName" />
+                </div>
+                <div class="form-group mt-3">
+                    <label for="templateContent">Template Content:</label>
+                    <textarea id="templateContent" rows="10" class="form-control" @bind="templateContent"></textarea>
+                </div>
+                <div class="mt-3 d-flex justify-content-between">
+                    <button class="btn btn-primary" @onclick="SaveTemplate">Save Template</button>
+                    @if (!isNewTemplate)
+                    {
+                        <button class="btn btn-danger" @onclick="DeleteTemplate">Delete Template</button>
+                    }
+                </div>
+                
+                <hr />
+                
+                <h3>Test Template</h3>
+                <div class="form-group">
+                    <label for="testInput">Input:</label>
+                    <textarea id="testInput" rows="3" class="form-control" @bind="testInput"></textarea>
+                </div>
+                <div class="form-group mt-2">
+                    <label for="modelSelect">Model:</label>
+                    <select id="modelSelect" class="form-control" @bind="selectedModel">
+                        @foreach (var model in availableModels)
+                        {
+                            <option value="@model">@model</option>
+                        }
+                    </select>
+                </div>
+                <div class="mt-3">
+                    <button class="btn btn-success" @onclick="TestTemplate" disabled="@isGenerating">
+                        @(isGenerating ? "Generating..." : "Test Template")
+                    </button>
+                </div>
+                
+               @if (!string.IsNullOrEmpty(testOutput))
+{
+    <div class="test-output mt-3">
+        <h4>Output:</h4>
+        <div class="card">
+            <div class="card-body">
+                <MarkdownView Content="@testOutput" />
+            </div>
+        </div>
+    </div>
+}
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private Dictionary<string, string> savedTemplates = new();
+    private string selectedTemplateName = "";
+    private string templateName = "";
+    private string templateContent = "";
+    private bool isNewTemplate = false;
+    private string testInput = "Hello, how can you help me today?";
+    private string testOutput = "";
+    private bool isGenerating = false;
+    private string selectedModel = "llama3";
+    private List<string> availableModels = new();
+    
+    private const string TEMPLATES_STORAGE_KEY = "ollama_templates";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadTemplatesAsync();
+        await LoadModelsAsync();
+        
+        // Add default templates if none exist
+        if (savedTemplates.Count == 0)
+        {
+            savedTemplates.Add("Standard Chat", "{{ if .System }}{{ .System }}{{ end }}\n{{ range $i, $message := .Messages }}\n{{- if eq $message.Role \"user\" }}\nUser: {{ $message.Content }}\n{{ else if eq $message.Role \"assistant\" }}\nAssistant: {{ $message.Content }}\n{{ end }}\n{{ end }}\nAssistant:");
+            savedTemplates.Add("JSON Output", "{{ if .System }}{{ .System }}{{ else }}You are a helpful AI assistant that outputs JSON.{{ end }}\n{{ range $i, $message := .Messages }}\n{{- if eq $message.Role \"user\" }}\nUser: {{ $message.Content }}\n{{ else if eq $message.Role \"assistant\" }}\nAssistant: {{ $message.Content }}\n{{ end }}\n{{ end }}\nAssistant: ```json\n");
+            await SaveTemplatesAsync();
+        }
+        
+        if (!string.IsNullOrEmpty(selectedTemplateName) && savedTemplates.ContainsKey(selectedTemplateName))
+        {
+            templateContent = savedTemplates[selectedTemplateName];
+        }
+        else if (savedTemplates.Count > 0)
+        {
+            selectedTemplateName = savedTemplates.Keys.First();
+            templateName = selectedTemplateName;
+            templateContent = savedTemplates[selectedTemplateName];
+        }
+    }
+    
+    private async Task LoadModelsAsync()
+    {
+        try
+        {
+            var models = await OllamaService.ListModelsAsync();
+            availableModels = models.Select(m => m.Name).ToList();
+            
+            if (availableModels.Count > 0 && !availableModels.Contains(selectedModel))
+            {
+                selectedModel = availableModels[0];
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading models: {ex.Message}");
+        }
+    }
+    
+    private async Task LoadTemplatesAsync()
+    {
+        try
+        {
+            var json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", TEMPLATES_STORAGE_KEY);
+            if (!string.IsNullOrEmpty(json))
+            {
+                savedTemplates = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading templates: {ex.Message}");
+        }
+    }
+    
+    private async Task SaveTemplatesAsync()
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(savedTemplates);
+            await JSRuntime.InvokeVoidAsync("localStorage.setItem", TEMPLATES_STORAGE_KEY, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error saving templates: {ex.Message}");
+        }
+    }
+    
+    private void SelectTemplate(string name)
+    {
+        selectedTemplateName = name;
+        templateName = name;
+        templateContent = savedTemplates[name];
+        isNewTemplate = false;
+    }
+    
+    private void CreateNewTemplate()
+    {
+        selectedTemplateName = "";
+        templateName = "New Template";
+        templateContent = "";
+        isNewTemplate = true;
+    }
+    
+    private async Task SaveTemplate()
+    {
+        if (string.IsNullOrWhiteSpace(templateName))
+        {
+            return;
+        }
+        
+        savedTemplates[templateName] = templateContent;
+        selectedTemplateName = templateName;
+        isNewTemplate = false;
+        
+        await SaveTemplatesAsync();
+    }
+    
+    private async Task DeleteTemplate()
+    {
+        if (savedTemplates.ContainsKey(selectedTemplateName))
+        {
+            savedTemplates.Remove(selectedTemplateName);
+            await SaveTemplatesAsync();
+            
+            if (savedTemplates.Count > 0)
+            {
+                SelectTemplate(savedTemplates.Keys.First());
+            }
+            else
+            {
+                CreateNewTemplate();
+            }
+        }
+    }
+    
+    private async Task TestTemplate()
+    {
+        if (string.IsNullOrWhiteSpace(templateContent) || string.IsNullOrWhiteSpace(testInput))
+        {
+            return;
+        }
+        
+        isGenerating = true;
+        StateHasChanged();
+        
+        try
+        {
+            testOutput = await OllamaService.GenerateWithTemplateAsync(testInput, templateContent, selectedModel);
+        }
+        catch (Exception ex)
+        {
+            testOutput = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isGenerating = false;
+            StateHasChanged();
+        }
+    }
+}

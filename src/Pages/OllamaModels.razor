@@ -5,41 +5,169 @@
 
 <PageTitle>Ollama Models</PageTitle>
 
-<h2>Models available locally</h2>
+<h2>Installed Models</h2>
 @if (models == null)
 {
-    <p><em>Loading...</em></p>
+    <p><em>Loading installed models...</em></p>
 }
 else
 {
-    <table class="table">
-        <thead>
-            <tr>
-                <th>Model</th>
-                <th>Version</th>
-                <th>Digest</th>
-                <th>Format</th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var model in models)
-            {
+    <div class="table-responsive">
+        <table class="table table-striped">
+            <thead>
                 <tr>
-                    <td>@model.Name</td>
-                    <td>@model.Size</td>
-                    <td>@model.Digest</td>
-                    <td>@model.Details.Format</td>
+                    <th>Model</th>
+                    <th>Format</th>
+                    <th>Family</th>
+                    <th>Parameter Size</th>
+                    <th>Quantization</th>
                 </tr>
-            }
-        </tbody>
-    </table>
+            </thead>
+            <tbody>
+                @foreach (var model in models)
+                {
+                    <tr>
+                        <td>@model.Name</td>
+                        <td>@model.Details.Format</td>
+                        <td>@(model.Details.Family ?? "Unknown")</td>
+                        <td>@(model.Size)</td>
+                        <td>@(model.Details.ParameterSize)</td>
+                        <td>@(model.Details.QuantizationLevel)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+<hr />
+
+<h2>Available Models for Download</h2>
+@if (availableModels == null)
+{
+    <p><em>Loading available models...</em></p>
+}
+else
+{
+    <div class="row">
+        @foreach (var model in availableModels)
+        {
+            <div class="col-md-6 col-lg-4 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h5 class="mb-0">@model.DisplayName</h5>
+                    </div>
+                    <div class="card-body">
+                        <p>@model.Description</p>
+                        <p><strong>Size:</strong> @model.Size</p>
+                        <p><strong>Model ID:</strong> @model.Name</p>
+                    </div>
+                    <div class="card-footer">
+                        @if (model.IsInstalled)
+                        {
+                            <button class="btn btn-success w-100" disabled>
+                                <i class="oi oi-check"></i> Installed
+                            </button>
+                        }
+                        else if (downloadingModel == model.Name)
+                        {
+                            <div class="text-center">
+                                <div class="progress mb-3">
+                                    <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                         role="progressbar" 
+                                         style="width: @downloadProgress%;" 
+                                         aria-valuenow="@downloadProgress" 
+                                         aria-valuemin="0" 
+                                         aria-valuemax="100">
+                                        @downloadProgress%
+                                    </div>
+                                </div>
+                                <button class="btn btn-warning w-100" disabled>
+                                    <i class="oi oi-clock"></i> Downloading...
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            <button class="btn btn-primary w-100" @onclick="() => DownloadModel(model.Name)">
+                                <i class="oi oi-cloud-download"></i> Download
+                            </button>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(statusMessage))
+{
+    <div class="alert @statusAlertClass alert-dismissible fade show mt-3" role="alert">
+        @statusMessage
+        <button type="button" class="btn-close" @onclick="ClearStatusMessage"></button>
+    </div>
 }
 
 @code {
-
     private IEnumerable<Model> models;
+    private List<OllamaService.AvailableModel> availableModels;
+    private string downloadingModel = "";
+    private int downloadProgress = 0;
+    private string statusMessage = "";
+    private string statusAlertClass = "alert-info";
+
     protected override async Task OnInitializedAsync()
     {
-        models = await OService.ListModelsAsync();
+        await LoadData();
+    }
+    
+    private async Task LoadData()
+    {
+        try
+        {
+            models = await OService.ListModelsAsync();
+            availableModels = await OService.GetAvailableModelsAsync();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error loading models: {ex.Message}";
+            statusAlertClass = "alert-danger";
+        }
+    }
+    
+    private async Task DownloadModel(string modelName)
+    {
+        downloadingModel = modelName;
+        downloadProgress = 0;
+        statusMessage = $"Starting download of {modelName}...";
+        statusAlertClass = "alert-info";
+        StateHasChanged();
+        
+        var progress = new Progress<OllamaService.DownloadProgress>(p => {
+            downloadProgress = p.PercentComplete;
+            StateHasChanged();
+        });
+        
+        var result = await OService.DownloadModelAsync(modelName, progress);
+        
+        if (result.Success)
+        {
+            statusMessage = $"Successfully downloaded {modelName}";
+            statusAlertClass = "alert-success";
+        }
+        else
+        {
+            statusMessage = $"Error downloading {modelName}: {result.Message}";
+            statusAlertClass = "alert-danger";
+        }
+        
+        downloadingModel = "";
+        await LoadData(); // Refresh the lists
+    }
+    
+    private void ClearStatusMessage()
+    {
+        statusMessage = "";
     }
 }

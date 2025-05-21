@@ -31,13 +31,15 @@ public class OllamaService
 
     public async Task<string> ChatAsync(string message, string model = "llama3")
     {
+        _logger.LogInformation("Chatting with model: {Model}", model);
         var response = await _client.ChatAsync(new ChatRequest
         {
             Model = model,
             Messages = new List<OllamaSharp.Models.Chat.Message>
             {
                 new Message { Role = OllamaSharp.Models.Chat.ChatRole.User, Content = message }
-            }
+            },
+            Stream = true
         }).StreamToEndAsync();
 
         return response.Message.Content;
@@ -226,6 +228,165 @@ public class OllamaService
 
         return jsonResponse.GetProperty("response").GetString() ?? string.Empty;
     }
+    public class AvailableModel
+{
+    public string Name { get; set; }
+    public string DisplayName { get; set; }
+    public string Description { get; set; }
+    public string Size { get; set; }
+    public bool IsInstalled { get; set; }
+}
+
+public class DownloadProgress
+{
+    public string ModelName { get; set; }
+    public long BytesDownloaded { get; set; }
+    public long TotalBytes { get; set; }
+    public int PercentComplete { get; set; }
+    public bool IsCompleted { get; set; }
+}
+
+public class DownloadStatus
+{
+    public bool Success { get; set; }
+    public string Message { get; set; }
+}
+
+public async Task<List<AvailableModel>> GetAvailableModelsAsync()
+{
+    // Since OllamaSharp doesn't provide a direct method to list downloadable models,
+    // we'll use a curated list of popular models
+    var availableModels = new List<AvailableModel>
+    {
+        new AvailableModel { Name = "llama3", DisplayName = "Llama 3 8B", Description = "Meta's Llama 3 8B model", Size = "4.7 GB" },
+        new AvailableModel { Name = "granite3.2:2b", DisplayName = "Granite 3.2 2B", Description = "Granite-3.2 is a family of long-context AI models from IBM Granite fine-tuned for thinking capabilities.", Size = "1.5 GB" },
+        new AvailableModel { Name = "llama3:8b", DisplayName = "Llama 3 8B", Description = "Meta's Llama 3 8B model", Size = "4.7 GB" },
+        new AvailableModel { Name = "llama3:70b", DisplayName = "Llama 3 70B", Description = "Meta's Llama 3 70B model", Size = "39.8 GB" },
+        new AvailableModel { Name = "mistral", DisplayName = "Mistral 7B", Description = "Mistral AI's 7B model", Size = "4.1 GB" },
+        new AvailableModel { Name = "mixtral", DisplayName = "Mixtral 8x7B", Description = "Mistral AI's mixture of experts model", Size = "26.1 GB" },
+        new AvailableModel { Name = "gemma:2b", DisplayName = "Gemma 2B", Description = "Google's lightweight Gemma model", Size = "1.4 GB" },
+        new AvailableModel { Name = "gemma:7b", DisplayName = "Gemma 7B", Description = "Google's Gemma model", Size = "4.8 GB" },
+        new AvailableModel { Name = "phi3", DisplayName = "Phi-3 Mini", Description = "Microsoft's Phi-3 Mini model", Size = "4.1 GB" },
+        new AvailableModel { Name = "codellama", DisplayName = "CodeLlama 7B", Description = "Meta's CodeLlama for code generation", Size = "4.2 GB" },
+        new AvailableModel { Name = "nous-hermes2", DisplayName = "Nous Hermes 2", Description = "Fine-tuned model by Nous Research", Size = "4.5 GB" },
+        new AvailableModel { Name = "llava", DisplayName = "LLaVA", Description = "Large language and vision assistant", Size = "4.5 GB" },
+        new AvailableModel { Name = "neural-chat", DisplayName = "Neural Chat", Description = "Intel's Neural Chat model", Size = "4.1 GB" },
+        new AvailableModel { Name = "solar", DisplayName = "SOLAR", Description = "Upstage's SOLAR model", Size = "4.2 GB" },
+        new AvailableModel { Name = "stable-code", DisplayName = "Stable Code", Description = "Model optimized for code generation", Size = "4.1 GB" },
+        new AvailableModel { Name = "whisper", DisplayName = "Whisper", Description = "OpenAI's speech recognition model", Size = "1.5 GB" }
+    };
+
+    // Check which models are already installed
+    var installedModels = await ListModelsAsync();
+    var installedModelNames = installedModels.Select(m => m.Name.Split(':')[0].ToLower()).ToHashSet();
+    
+    foreach (var model in availableModels)
+    {
+        var baseName = model.Name.Split(':')[0].ToLower();
+        model.IsInstalled = installedModelNames.Contains(baseName);
+    }
+
+    return availableModels;
+}
+
+public async Task<DownloadStatus> DownloadModelAsync(string modelName, IProgress<DownloadProgress> progress = null)
+{
+    try
+    {
+            IProgress<PullModelResponse> progressReporter = new Progress<PullModelResponse>((response) =>
+            {
+                if (progress != null && response.Status != null)
+                {
+                    // Ollama API doesn't consistently provide download stats through the client
+                    // But we'll handle what we can
+                    var downloadProgress = new DownloadProgress
+                    {
+                        ModelName = modelName,
+                        PercentComplete = CalculateProgress(response)
+                    };
+
+                    progress.Report(downloadProgress);
+                }
+            });
+        
+        // Request the model pull with streaming to get progress updates
+        var pullRequest = new PullModelRequest
+        {
+            Model = modelName,
+            Stream = true
+        };
+        
+        // Use the streaming API to get progress updates
+        await foreach (var update in _client.PullModelAsync(pullRequest))
+        {
+            progressReporter.Report(update);
+            
+            // Check if download is complete
+            if (update.Status == "success")
+            {
+                progress?.Report(new DownloadProgress
+                {
+                    ModelName = modelName,
+                    PercentComplete = 100,
+                    IsCompleted = true
+                });
+                
+                return new DownloadStatus
+                {
+                    Success = true,
+                    Message = "Model downloaded successfully"
+                };
+            }
+        }
+        
+        // If we get here, we should check if the model is now available
+        var models = await ListModelsAsync();
+        if (models.Any(m => m.Name == modelName || m.Name.StartsWith(modelName + ":")))
+        {
+            return new DownloadStatus
+            {
+                Success = true,
+                Message = "Model download completed"
+            };
+        }
+        else
+        {
+            return new DownloadStatus
+            {
+                Success = false,
+                Message = "Download may have failed or is still in progress"
+            };
+        }
+    }
+    catch (Exception ex)
+    {
+        return new DownloadStatus
+        {
+            Success = false,
+            Message = $"Error downloading model: {ex.Message}"
+        };
+    }
+}
+
+private int CalculateProgress(PullModelResponse response)
+{
+    // The PullModelResponse doesn't have consistent progress information
+    // We'll make a best effort estimate based on what's available
+    
+    if (response.Completed == response.Total && response.Total > 0)
+    {
+        return (int)((response.Completed / (double)response.Total) * 100);
+    }
+    else if (!string.IsNullOrEmpty(response.Status))
+    {
+        if (response.Status == "downloading")
+            return 50; // Generic progress indicator if we don't have specifics
+        else if (response.Status == "success")
+            return 100;
+    }
+    
+    return 0; // Default if we can't determine progress
+}
 
 }
 

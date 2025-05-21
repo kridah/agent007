@@ -22,15 +22,7 @@
             {
                 <div class="message @GetMessageClass(message.Role)">
                     <div class="message-header">@GetDisplayRole(message.Role)</div>
-                    <div class="message-content">
-                        @if (message.Role == "system")
-                        {
-                            @((MarkupString)FormatMessage(message.Content))
-                        }
-                        else
-                        {
-                            <MarkdownView Content="@message.Content" />
-                        }
+                    <div class="message-content">@((MarkupString)FormatMessage(message.Content))
                     </div>
                 </div>
             }

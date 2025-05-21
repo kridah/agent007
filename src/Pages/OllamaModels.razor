@@ -1,7 +1,7 @@
 @page "/ollamamodels"
 @using src.Data
 @inject OllamaService OService
-@using OllamaSharp.Models as OllamaModels
+@using OllamaSharp.Models
 
 <PageTitle>Ollama Models</PageTitle>
 
@@ -19,6 +19,7 @@ else
                     <th>Model</th>
                     <th>Format</th>
                     <th>Family</th>
+                    <th>Model Size</th>
                     <th>Parameter Size</th>
                     <th>Quantization</th>
                 </tr>
@@ -30,7 +31,7 @@ else
                         <td>@model.Name</td>
                         <td>@model.Details.Format</td>
                         <td>@(model.Details.Family ?? "Unknown")</td>
-                        <td>@(model.Size)</td>
+                        <td>@($"{model.Size / 1000000f:F2} MB")</td>
                         <td>@(model.Details.ParameterSize)</td>
                         <td>@(model.Details.QuantizationLevel)</td>
                     </tr>

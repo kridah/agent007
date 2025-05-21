@@ -14,7 +14,8 @@
         {
             <div class="message @(message.IsUser ? "user-message" : "ai-message")">
                 <div class="message-header">@(message.IsUser ? "You" : selectedModel)</div>
-                <div class="message-content">@((MarkupString)FormatMessage(message.Content))</div>
+                 <div class="message-content">@((MarkupString)FormatMessage(message.Content))
+                </div>
             </div>
         }
         @if (isGenerating)

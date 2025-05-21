@@ -1,0 +1,114 @@
+@page "/template-tester"
+@using src.Data
+@inject OllamaService OllamaService
+
+<h3>Template Tester</h3>
+
+<div class="container">
+    <div class="row mb-3">
+        <div class="col">
+            <label for="templateContent">Template:</label>
+            <textarea id="templateContent" class="form-control" rows="10" @bind="templateContent"></textarea>
+        </div>
+    </div>
+    
+    <div class="row mb-3">
+        <div class="col">
+            <label for="promptInput">Prompt:</label>
+            <textarea id="promptInput" class="form-control" rows="3" @bind="promptInput"></textarea>
+        </div>
+    </div>
+    
+    <div class="row mb-3">
+        <div class="col">
+            <label for="modelSelect">Model:</label>
+            <select id="modelSelect" class="form-control" @bind="selectedModel">
+                @foreach (var model in availableModels)
+                {
+                    <option value="@model">@model</option>
+                }
+            </select>
+        </div>
+    </div>
+    
+    <div class="row mb-3">
+        <div class="col">
+            <button class="btn btn-primary" @onclick="TestTemplate" disabled="@isGenerating">
+                @(isGenerating ? "Testing..." : "Test Template")
+            </button>
+        </div>
+    </div>
+    
+@if (!string.IsNullOrEmpty(result))
+{
+    <div class="row">
+        <div class="col">
+            <div class="card">
+                <div class="card-header">Result</div>
+                <div class="card-body">
+                    <MarkdownView Content="@result" />
+                </div>
+            </div>
+        </div>
+    </div>
+}
+</div>
+
+@code {
+    private string templateContent = @"{{ if .System }}{{ .System }}{{ end }}
+{{ range $i, $message := .Messages }}
+{{- if eq $message.Role ""user"" }}
+User: {{ $message.Content }}
+{{ else if eq $message.Role ""assistant"" }}
+Assistant: {{ $message.Content }}
+{{ end }}
+{{ end }}
+{{ .Prompt }}";
+
+    private string promptInput = "What is the capital of France?";
+    private string selectedModel = "llama3";
+    private List<string> availableModels = new();
+    private string result = "";
+    private bool isGenerating = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try 
+        {
+            var models = await OllamaService.ListModelsAsync();
+            availableModels = models.Select(m => m.Name).ToList();
+            
+            if (availableModels.Count > 0 && !availableModels.Contains(selectedModel))
+            {
+                selectedModel = availableModels[0];
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading models: {ex.Message}");
+        }
+    }
+
+    private async Task TestTemplate()
+    {
+        if (string.IsNullOrEmpty(templateContent) || string.IsNullOrEmpty(promptInput))
+            return;
+            
+        isGenerating = true;
+        StateHasChanged();
+        
+        try
+        {
+            result = await OllamaService.GenerateWithTemplateAsync(input: promptInput, template: templateContent, model: selectedModel);
+        }
+        catch (Exception ex)
+        {
+            result = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isGenerating = false;
+            StateHasChanged();
+        }
+    }
+}

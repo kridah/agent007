@@ -379,6 +379,7 @@ public class OllamaService
             // we'll use a curated list of popular models
             var availableModels = new List<AvailableModel>
             {
+                new AvailableModel { Name = "llama3.2:latest", DisplayName = "Llama 3.2 8B", Description = "Meta's Llama 3.2 1B model", Size = "2.0 GB" },
                 new AvailableModel { Name = "llama3", DisplayName = "Llama 3 8B", Description = "Meta's Llama 3 8B model", Size = "4.7 GB" },
                 new AvailableModel { Name = "granite3.2:2b", DisplayName = "Granite 3.2 2B", Description = "IBM Granite-3.2 2B model.", Size = "1.5 GB" },
                 new AvailableModel { Name = "llama3:8b", DisplayName = "Llama 3 8B", Description = "Meta's Llama 3 8B model", Size = "4.7 GB" },

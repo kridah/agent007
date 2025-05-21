@@ -1,6 +1,7 @@
 @page "/chat"
 @using System.Text.Json
 @using src.Data
+@using src.Models
 @inject OllamaService OllamaService
 @inject IJSRuntime JSRuntime
 
@@ -319,11 +320,5 @@
         return content
             .Replace("\n", "<br>")
             .Replace("  ", "&nbsp;&nbsp;");
-    }
-
-    public class ChatMessage
-    {
-        public string Content { get; set; } = "";
-        public bool IsUser { get; set; }
     }
 }

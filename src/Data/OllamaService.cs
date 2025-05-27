@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using OllamaSharp;
@@ -7,39 +6,137 @@ using OllamaSharp.Models.Chat;
 
 namespace src.Data;
 
-
 public class OllamaService
 {
     private readonly ILogger<OllamaService> _logger;
     private readonly OllamaApiClient _client;
+
 
     public OllamaService(IOptions<OllamaSettings> options)
     {
         _client = new OllamaApiClient(options.Value.BaseUrl);
     }
 
-    public async Task<string> GenerateAsync(string prompt, string model = "llama3")
+    // demo tool call
+    public async Task<Message> CalculateFunction(string message, string model = "llama3.2")
+    {
+        Console.WriteLine("Calculating expression with model: {0}", model);
+        var responseStream = _client.ChatAsync(new ChatRequest
+        {
+            Model = model,
+            Messages = new List<Message>
+            {
+                new Message { Role = ChatRole.System, Content = "You are a calculator. Please evaluate the expression provided. Respond with a short poem related to the result." },
+                new Message { Role = ChatRole.User, Content = message }
+            },
+            Stream = false,
+            Tools = new List<Tool>
+            {
+                new Tool
+                {
+                    Type = "function",
+                    Function = new Function
+                    {
+                        Name = "calculate",
+                        Description = "Calculates a mathematical expression",
+                        Parameters = new Parameters
+                        {
+                            Type = "object",
+                            Properties = new Dictionary<string, Property>
+                            {
+                                {
+                                    "expression",
+                                    new Property
+                                    {
+                                        Type = "string",
+                                        Description = "The mathematical expression to calculate"
+                                    }
+                                }
+                            },
+                            Required = new List<string> { "expression" }
+                        }
+                    }
+                }
+            }
+        });
+        await foreach (var responseChunk in responseStream)
+        {
+            if (responseChunk?.Message.ToolCalls != null && responseChunk.Message.ToolCalls.Any())
+            {
+                // Extract the expression from the tool call
+                var toolCall = responseChunk.Message.ToolCalls.First();
+                var expression = toolCall.Function.Arguments["expression"].ToString();
+
+                // Evaluate the expression in C#
+                var result = EvaluateMathExpression(expression);
+
+                // Return a message with the result
+                return new Message
+                {
+                    Role = ChatRole.Assistant,
+                    Content = result.ToString()
+                };
+            }
+
+            // Normal message, just return it
+            return responseChunk.Message;
+        }
+
+        // If we reach here, no tool call was made
+        return new Message
+        {
+            Role = ChatRole.Assistant,
+            Content = "No valid mathematical expression found in the message."
+        };
+    }
+
+    // Example math evaluation (simple, for demo)
+    private object EvaluateMathExpression(string expression)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+            return "Invalid expression: empty input.";
+
+        // Only allow digits, whitespace, decimal points, and arithmetic operators
+        var allowedPattern = @"^[\d\s\.\+\-\*\/\(\)]+$";
+        if (!System.Text.RegularExpressions.Regex.IsMatch(expression, allowedPattern))
+            return "Invalid expression: only numbers and + - * / ( ) are allowed.";
+
+        try
+        {
+            // Prevent dangerous expressions (e.g., division by zero)
+            var table = new System.Data.DataTable();
+            table.CaseSensitive = false;
+            var value = table.Compute(expression, "");
+            return value;
+        }
+        catch
+        {
+            return "Invalid expression: could not evaluate.";
+        }
+    }
+
+    public async Task<string> GenerateAsync(string prompt, string model = "llama3.2")
     {
         var response = await _client.GenerateAsync(new GenerateRequest
         {
             Model = model,
-            Prompt = prompt
+            Prompt = prompt,
         }).StreamToEndAsync();
 
         return response.Response;
     }
 
-    public async Task<string> ChatAsync(string message, string model = "llama3")
+    public async Task<string> ChatAsync(string message, string model = "llama3.2")
     {
         _logger.LogInformation("Chatting with model: {Model}", model);
         var response = await _client.ChatAsync(new ChatRequest
         {
             Model = model,
-            Messages = new List<OllamaSharp.Models.Chat.Message>
+            Messages = new List<Message>
             {
-                new Message { Role = OllamaSharp.Models.Chat.ChatRole.User, Content = message }
+                new Message { Role = ChatRole.User, Content = message }
             },
-            Stream = true
+            Stream = true,
         }).StreamToEndAsync();
 
         return response.Message.Content;
@@ -61,8 +158,8 @@ public class OllamaService
     /// </summary>
     public async Task<string> CreateMultiAgentConversationAsync(
         string initialPrompt,
-        string firstModel = "llama3",
-        string secondModel = "llama3",
+        string firstModel = "llama3.2",
+        string secondModel = "llama3.2",
         int maxTurns = 3)
     {
         var conversation = new List<Message>();
@@ -184,6 +281,7 @@ public class OllamaService
 
         return response.Message.Content;
     }
+
     public async Task<string> GenerateWithTemplateAsync(
         string model,
         string input,
@@ -202,7 +300,7 @@ public class OllamaService
         return response.Response;
     }
 
-    public async Task<string> UseTemplateAsync(string prompt, string templateContent, string model = "llama3")
+    public async Task<string> UseTemplateAsync(string prompt, string templateContent, string model = "llama3.2")
     {
         using var client = new HttpClient();
         client.BaseAddress = new Uri("http://localhost:11434");
@@ -228,71 +326,128 @@ public class OllamaService
 
         return jsonResponse.GetProperty("response").GetString() ?? string.Empty;
     }
+
     public class AvailableModel
-{
-    public string Name { get; set; }
-    public string DisplayName { get; set; }
-    public string Description { get; set; }
-    public string Size { get; set; }
-    public bool IsInstalled { get; set; }
-}
-
-public class DownloadProgress
-{
-    public string ModelName { get; set; }
-    public long BytesDownloaded { get; set; }
-    public long TotalBytes { get; set; }
-    public int PercentComplete { get; set; }
-    public bool IsCompleted { get; set; }
-}
-
-public class DownloadStatus
-{
-    public bool Success { get; set; }
-    public string Message { get; set; }
-}
-
-public async Task<List<AvailableModel>> GetAvailableModelsAsync()
-{
-    // Since OllamaSharp doesn't provide a direct method to list downloadable models,
-    // we'll use a curated list of popular models
-    var availableModels = new List<AvailableModel>
     {
-        new AvailableModel { Name = "llama3", DisplayName = "Llama 3 8B", Description = "Meta's Llama 3 8B model", Size = "4.7 GB" },
-        new AvailableModel { Name = "granite3.2:2b", DisplayName = "Granite 3.2 2B", Description = "Granite-3.2 is a family of long-context AI models from IBM Granite fine-tuned for thinking capabilities.", Size = "1.5 GB" },
-        new AvailableModel { Name = "llama3:8b", DisplayName = "Llama 3 8B", Description = "Meta's Llama 3 8B model", Size = "4.7 GB" },
-        new AvailableModel { Name = "llama3:70b", DisplayName = "Llama 3 70B", Description = "Meta's Llama 3 70B model", Size = "39.8 GB" },
-        new AvailableModel { Name = "mistral", DisplayName = "Mistral 7B", Description = "Mistral AI's 7B model", Size = "4.1 GB" },
-        new AvailableModel { Name = "mixtral", DisplayName = "Mixtral 8x7B", Description = "Mistral AI's mixture of experts model", Size = "26.1 GB" },
-        new AvailableModel { Name = "gemma:2b", DisplayName = "Gemma 2B", Description = "Google's lightweight Gemma model", Size = "1.4 GB" },
-        new AvailableModel { Name = "gemma:7b", DisplayName = "Gemma 7B", Description = "Google's Gemma model", Size = "4.8 GB" },
-        new AvailableModel { Name = "phi3", DisplayName = "Phi-3 Mini", Description = "Microsoft's Phi-3 Mini model", Size = "4.1 GB" },
-        new AvailableModel { Name = "codellama", DisplayName = "CodeLlama 7B", Description = "Meta's CodeLlama for code generation", Size = "4.2 GB" },
-        new AvailableModel { Name = "nous-hermes2", DisplayName = "Nous Hermes 2", Description = "Fine-tuned model by Nous Research", Size = "4.5 GB" },
-        new AvailableModel { Name = "llava", DisplayName = "LLaVA", Description = "Large language and vision assistant", Size = "4.5 GB" },
-        new AvailableModel { Name = "neural-chat", DisplayName = "Neural Chat", Description = "Intel's Neural Chat model", Size = "4.1 GB" },
-        new AvailableModel { Name = "solar", DisplayName = "SOLAR", Description = "Upstage's SOLAR model", Size = "4.2 GB" },
-        new AvailableModel { Name = "stable-code", DisplayName = "Stable Code", Description = "Model optimized for code generation", Size = "4.1 GB" },
-        new AvailableModel { Name = "whisper", DisplayName = "Whisper", Description = "OpenAI's speech recognition model", Size = "1.5 GB" }
-    };
-
-    // Check which models are already installed
-    var installedModels = await ListModelsAsync();
-    var installedModelNames = installedModels.Select(m => m.Name.Split(':')[0].ToLower()).ToHashSet();
-    
-    foreach (var model in availableModels)
-    {
-        var baseName = model.Name.Split(':')[0].ToLower();
-        model.IsInstalled = installedModelNames.Contains(baseName);
+        public string Name { get; set; }
+        public string DisplayName { get; set; }
+        public string Description { get; set; }
+        public string Size { get; set; }
+        public bool IsInstalled { get; set; }
     }
 
-    return availableModels;
-}
-
-public async Task<DownloadStatus> DownloadModelAsync(string modelName, IProgress<DownloadProgress> progress = null)
-{
-    try
+    public class DownloadProgress
     {
+        public string ModelName { get; set; }
+        public long BytesDownloaded { get; set; }
+        public long TotalBytes { get; set; }
+        public int PercentComplete { get; set; }
+        public bool IsCompleted { get; set; }
+    }
+
+    public class DownloadStatus
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; }
+    }
+
+    public async Task<List<AvailableModel>> GetAvailableModelsAsync()
+    {
+        // Since OllamaSharp doesn't provide a direct method to list downloadable models,
+        // we'll use a curated list of popular models
+        var availableModels = new List<AvailableModel>
+        {
+            new AvailableModel
+            {
+                Name = "llama3", DisplayName = "Llama 3 8B", Description = "Meta's Llama 3 8B model", Size = "4.7 GB"
+            },
+            new AvailableModel
+            {
+                Name = "granite3.2:2b", DisplayName = "Granite 3.2 2B",
+                Description =
+                    "Granite-3.2 is a family of long-context AI models from IBM Granite fine-tuned for thinking capabilities.",
+                Size = "1.5 GB"
+            },
+            new AvailableModel
+            {
+                Name = "llama3:8b", DisplayName = "Llama 3 8B", Description = "Meta's Llama 3 8B model", Size = "4.7 GB"
+            },
+            new AvailableModel
+            {
+                Name = "llama3:70b", DisplayName = "Llama 3 70B", Description = "Meta's Llama 3 70B model",
+                Size = "39.8 GB"
+            },
+            new AvailableModel
+            {
+                Name = "mistral", DisplayName = "Mistral 7B", Description = "Mistral AI's 7B model", Size = "4.1 GB"
+            },
+            new AvailableModel
+            {
+                Name = "mixtral", DisplayName = "Mixtral 8x7B", Description = "Mistral AI's mixture of experts model",
+                Size = "26.1 GB"
+            },
+            new AvailableModel
+            {
+                Name = "gemma:2b", DisplayName = "Gemma 2B", Description = "Google's lightweight Gemma model",
+                Size = "1.4 GB"
+            },
+            new AvailableModel
+                { Name = "gemma:7b", DisplayName = "Gemma 7B", Description = "Google's Gemma model", Size = "4.8 GB" },
+            new AvailableModel
+            {
+                Name = "phi3", DisplayName = "Phi-3 Mini", Description = "Microsoft's Phi-3 Mini model", Size = "4.1 GB"
+            },
+            new AvailableModel
+            {
+                Name = "codellama", DisplayName = "CodeLlama 7B", Description = "Meta's CodeLlama for code generation",
+                Size = "4.2 GB"
+            },
+            new AvailableModel
+            {
+                Name = "nous-hermes2", DisplayName = "Nous Hermes 2", Description = "Fine-tuned model by Nous Research",
+                Size = "4.5 GB"
+            },
+            new AvailableModel
+            {
+                Name = "llava", DisplayName = "LLaVA", Description = "Large language and vision assistant",
+                Size = "4.5 GB"
+            },
+            new AvailableModel
+            {
+                Name = "neural-chat", DisplayName = "Neural Chat", Description = "Intel's Neural Chat model",
+                Size = "4.1 GB"
+            },
+            new AvailableModel
+                { Name = "solar", DisplayName = "SOLAR", Description = "Upstage's SOLAR model", Size = "4.2 GB" },
+            new AvailableModel
+            {
+                Name = "stable-code", DisplayName = "Stable Code", Description = "Model optimized for code generation",
+                Size = "4.1 GB"
+            },
+            new AvailableModel
+            {
+                Name = "whisper", DisplayName = "Whisper", Description = "OpenAI's speech recognition model",
+                Size = "1.5 GB"
+            }
+        };
+
+        // Check which models are already installed
+        var installedModels = await ListModelsAsync();
+        var installedModelNames = installedModels.Select(m => m.Name.Split(':')[0].ToLower()).ToHashSet();
+
+        foreach (var model in availableModels)
+        {
+            var baseName = model.Name.Split(':')[0].ToLower();
+            model.IsInstalled = installedModelNames.Contains(baseName);
+        }
+
+        return availableModels;
+    }
+
+    public async Task<DownloadStatus> DownloadModelAsync(string modelName, IProgress<DownloadProgress> progress = null)
+    {
+        try
+        {
             IProgress<PullModelResponse> progressReporter = new Progress<PullModelResponse>((response) =>
             {
                 if (progress != null && response.Status != null)
@@ -308,85 +463,83 @@ public async Task<DownloadStatus> DownloadModelAsync(string modelName, IProgress
                     progress.Report(downloadProgress);
                 }
             });
-        
-        // Request the model pull with streaming to get progress updates
-        var pullRequest = new PullModelRequest
-        {
-            Model = modelName,
-            Stream = true
-        };
-        
-        // Use the streaming API to get progress updates
-        await foreach (var update in _client.PullModelAsync(pullRequest))
-        {
-            progressReporter.Report(update);
-            
-            // Check if download is complete
-            if (update.Status == "success")
+
+            // Request the model pull with streaming to get progress updates
+            var pullRequest = new PullModelRequest
             {
-                progress?.Report(new DownloadProgress
+                Model = modelName,
+                Stream = true
+            };
+
+            // Use the streaming API to get progress updates
+            await foreach (var update in _client.PullModelAsync(pullRequest))
+            {
+                progressReporter.Report(update);
+
+                // Check if download is complete
+                if (update.Status == "success")
                 {
-                    ModelName = modelName,
-                    PercentComplete = 100,
-                    IsCompleted = true
-                });
-                
+                    progress.Report(new DownloadProgress
+                    {
+                        ModelName = modelName,
+                        PercentComplete = 100,
+                        IsCompleted = true
+                    });
+
+                    return new DownloadStatus
+                    {
+                        Success = true,
+                        Message = "Model downloaded successfully"
+                    };
+                }
+            }
+
+            // If we get here, we should check if the model is now available
+            var models = await ListModelsAsync();
+            if (models.Any(m => m.Name == modelName || m.Name.StartsWith(modelName + ":")))
+            {
                 return new DownloadStatus
                 {
                     Success = true,
-                    Message = "Model downloaded successfully"
+                    Message = "Model download completed"
+                };
+            }
+            else
+            {
+                return new DownloadStatus
+                {
+                    Success = false,
+                    Message = "Download may have failed or is still in progress"
                 };
             }
         }
-        
-        // If we get here, we should check if the model is now available
-        var models = await ListModelsAsync();
-        if (models.Any(m => m.Name == modelName || m.Name.StartsWith(modelName + ":")))
-        {
-            return new DownloadStatus
-            {
-                Success = true,
-                Message = "Model download completed"
-            };
-        }
-        else
+        catch (Exception ex)
         {
             return new DownloadStatus
             {
                 Success = false,
-                Message = "Download may have failed or is still in progress"
+                Message = $"Error downloading model: {ex.Message}"
             };
         }
     }
-    catch (Exception ex)
+
+    private int CalculateProgress(PullModelResponse response)
     {
-        return new DownloadStatus
+        // The PullModelResponse doesn't have consistent progress information
+        // We'll make a best effort estimate based on what's available
+
+        if (response.Completed == response.Total && response.Total > 0)
         {
-            Success = false,
-            Message = $"Error downloading model: {ex.Message}"
-        };
+            return (int)((response.Completed / (double)response.Total) * 100);
+        }
+        else if (!string.IsNullOrEmpty(response.Status))
+        {
+            if (response.Status == "downloading")
+                return 50; // Generic progress indicator if we don't have specifics
+            else if (response.Status == "success")
+                return 100;
+        }
+
+        return 0; // Default if we can't determine progress
     }
 }
-
-private int CalculateProgress(PullModelResponse response)
-{
-    // The PullModelResponse doesn't have consistent progress information
-    // We'll make a best effort estimate based on what's available
-    
-    if (response.Completed == response.Total && response.Total > 0)
-    {
-        return (int)((response.Completed / (double)response.Total) * 100);
-    }
-    else if (!string.IsNullOrEmpty(response.Status))
-    {
-        if (response.Status == "downloading")
-            return 50; // Generic progress indicator if we don't have specifics
-        else if (response.Status == "success")
-            return 100;
-    }
-    
-    return 0; // Default if we can't determine progress
-}
-
-}
-

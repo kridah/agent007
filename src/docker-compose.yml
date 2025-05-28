@@ -1,0 +1,24 @@
+services:
+  ollama-agent1:
+    image: ollama/ollama:latest
+    container_name: ollama_agent1
+    environment:
+      - OLLAMA_MODELS=/models
+    ports:
+      - "11435:11434"
+    volumes:
+      - ollama_agent1_models:/models
+
+  ollama-agent2:
+    image: ollama/ollama:latest
+    container_name: ollama_agent2
+    environment:
+      - OLLAMA_MODELS=/models
+    ports:
+      - "11436:11434"
+    volumes:
+      - ollama_agent2_models:/models
+
+volumes:
+  ollama_agent1_models:
+  ollama_agent2_models:

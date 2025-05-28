@@ -1,0 +1,69 @@
+﻿@page "/multiagenttest"
+@inject src.Data.OllamaService OllamaService
+
+<h3>Multi-Agent Test</h3>
+
+@if (agents == null)
+{
+    <p>Loading agents...</p>
+}
+else
+{
+    <label>Select Agent:</label>
+    <select @bind="selectedAgent">
+        @foreach (var agent in agents)
+        {
+            <option value="@agent.Name">@agent.Name (@agent.Model)</option>
+        }
+    </select>
+
+    <div>
+        <textarea @bind="userMessage" placeholder="Type your message..." rows="3"></textarea>
+        <button @onclick="SendMessage">Send</button>
+    </div>
+
+    <div>
+        <h4>Conversation</h4>
+        @foreach (var msg in conversation)
+        {
+            <div><b>@msg.Role:</b> @msg.Content</div>
+        }
+    </div>
+}
+
+@code {
+    private List<OllamaAgentSettings> agents;
+    private string selectedAgent;
+    private string userMessage;
+    private List<MessageDisplay> conversation = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Load agents from OllamaService
+        var settings = await Task.FromResult(OllamaService); // Replace with actual method if needed
+        agents = settings._agentSettings.Values.ToList();
+        if (agents.Any())
+            selectedAgent = agents.First().Name;
+    }
+
+    private async Task SendMessage()
+    {
+        if (string.IsNullOrWhiteSpace(userMessage) || string.IsNullOrWhiteSpace(selectedAgent))
+            return;
+
+        conversation.Add(new MessageDisplay { Role = "User", Content = userMessage });
+
+        var agent = agents.First(a => a.Name == selectedAgent);
+        var response = await OllamaService.GenerateAsync(userMessage, agent.Name, agent.Model);
+
+        conversation.Add(new MessageDisplay { Role = "Agent", Content = response });
+
+        userMessage = string.Empty;
+    }
+
+    public class MessageDisplay
+    {
+        public string Role { get; set; }
+        public string Content { get; set; }
+    }
+}

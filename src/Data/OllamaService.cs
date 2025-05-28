@@ -12,10 +12,41 @@ public class OllamaService
 {
     private readonly ILogger<OllamaService> _logger;
     private readonly OllamaApiClient _client;
+    public readonly Dictionary<string, OllamaApiClient> _clients;
+    public readonly Dictionary<string, OllamaAgentSettings> _agentSettings;
 
-    public OllamaService(IOptions<OllamaSettings> options)
+    // public OllamaService(IOptions<OllamaSettings> options)
+    // {
+    //     _client = new OllamaApiClient(options.Value.BaseUrl);
+    // }
+
+    public OllamaService(IOptions<OllamaSettings> options, ILogger<OllamaService> logger)
     {
+        _logger = logger;
         _client = new OllamaApiClient(options.Value.BaseUrl);
+        _clients = new();
+        _agentSettings = new();
+
+        foreach (var agent in options.Value.Agents)
+        {
+            _clients[agent.Name] = new OllamaApiClient(agent.BaseUrl);
+            _agentSettings[agent.Name] = agent;
+        }
+    }
+
+    public async Task<string> GenerateAsync(string prompt, string agentName, string model)
+    {
+        if (!_clients.ContainsKey(agentName))
+            throw new ArgumentException($"Agent {agentName} not found.");
+
+        var agent = _agentSettings[agentName];
+        var response = await _clients[agentName].GenerateAsync(new GenerateRequest
+        {
+            Model = agent.Model,
+            Prompt = prompt
+        }).StreamToEndAsync();
+
+        return response.Response;
     }
 
     public async Task<string> GenerateAsync(string prompt, string model = "llama3")
@@ -137,7 +168,47 @@ public class OllamaService
         return result.ToString();
     }
 
-    // Add this method to your OllamaService class
+    // Use docker instances of Ollama
+    public async Task<string> GenerateAgentResponseAsync(
+        string agentName,
+        string latestMessage,
+        List<Pages.Multiagent.MessageDisplay> conversation,
+        string systemInstruction)
+    {
+        if (!_clients.ContainsKey(agentName))
+            throw new ArgumentException($"Agent {agentName} not found.");
+
+        var agent = _agentSettings[agentName];
+        var ollamaMessages = new List<Message>
+    {
+        new Message { Role = ChatRole.System, Content = systemInstruction }
+    };
+
+        foreach (var msg in conversation)
+        {
+            if (msg.Role == "system") continue;
+            ollamaMessages.Add(new Message
+            {
+                Role = ChatRole.User,
+                Content = msg.Content
+            });
+        }
+
+        ollamaMessages.Add(new Message
+        {
+            Role = ChatRole.User,
+            Content = latestMessage
+        });
+
+        var response = await _clients[agentName].ChatAsync(new ChatRequest
+        {
+            Model = agent.Model,
+            Messages = ollamaMessages
+        }).StreamToEndAsync();
+
+        return response.Message.Content;
+    }
+
     public async Task<string> GenerateAgentResponseAsync(
         string latestMessage,
         List<Pages.Multiagent.MessageDisplay> conversation,
@@ -229,34 +300,34 @@ public class OllamaService
         return jsonResponse.GetProperty("response").GetString() ?? string.Empty;
     }
     public class AvailableModel
-{
-    public string Name { get; set; }
-    public string DisplayName { get; set; }
-    public string Description { get; set; }
-    public string Size { get; set; }
-    public bool IsInstalled { get; set; }
-}
+    {
+        public string Name { get; set; }
+        public string DisplayName { get; set; }
+        public string Description { get; set; }
+        public string Size { get; set; }
+        public bool IsInstalled { get; set; }
+    }
 
-public class DownloadProgress
-{
-    public string ModelName { get; set; }
-    public long BytesDownloaded { get; set; }
-    public long TotalBytes { get; set; }
-    public int PercentComplete { get; set; }
-    public bool IsCompleted { get; set; }
-}
+    public class DownloadProgress
+    {
+        public string ModelName { get; set; }
+        public long BytesDownloaded { get; set; }
+        public long TotalBytes { get; set; }
+        public int PercentComplete { get; set; }
+        public bool IsCompleted { get; set; }
+    }
 
-public class DownloadStatus
-{
-    public bool Success { get; set; }
-    public string Message { get; set; }
-}
+    public class DownloadStatus
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; }
+    }
 
-public async Task<List<AvailableModel>> GetAvailableModelsAsync()
-{
-    // Since OllamaSharp doesn't provide a direct method to list downloadable models,
-    // we'll use a curated list of popular models
-    var availableModels = new List<AvailableModel>
+    public async Task<List<AvailableModel>> GetAvailableModelsAsync()
+    {
+        // Since OllamaSharp doesn't provide a direct method to list downloadable models,
+        // we'll use a curated list of popular models
+        var availableModels = new List<AvailableModel>
     {
         new AvailableModel { Name = "llama3", DisplayName = "Llama 3 8B", Description = "Meta's Llama 3 8B model", Size = "4.7 GB" },
         new AvailableModel { Name = "granite3.2:2b", DisplayName = "Granite 3.2 2B", Description = "Granite-3.2 is a family of long-context AI models from IBM Granite fine-tuned for thinking capabilities.", Size = "1.5 GB" },
@@ -276,23 +347,23 @@ public async Task<List<AvailableModel>> GetAvailableModelsAsync()
         new AvailableModel { Name = "whisper", DisplayName = "Whisper", Description = "OpenAI's speech recognition model", Size = "1.5 GB" }
     };
 
-    // Check which models are already installed
-    var installedModels = await ListModelsAsync();
-    var installedModelNames = installedModels.Select(m => m.Name.Split(':')[0].ToLower()).ToHashSet();
-    
-    foreach (var model in availableModels)
-    {
-        var baseName = model.Name.Split(':')[0].ToLower();
-        model.IsInstalled = installedModelNames.Contains(baseName);
+        // Check which models are already installed
+        var installedModels = await ListModelsAsync();
+        var installedModelNames = installedModels.Select(m => m.Name.Split(':')[0].ToLower()).ToHashSet();
+
+        foreach (var model in availableModels)
+        {
+            var baseName = model.Name.Split(':')[0].ToLower();
+            model.IsInstalled = installedModelNames.Contains(baseName);
+        }
+
+        return availableModels;
     }
 
-    return availableModels;
-}
-
-public async Task<DownloadStatus> DownloadModelAsync(string modelName, IProgress<DownloadProgress> progress = null)
-{
-    try
+    public async Task<DownloadStatus> DownloadModelAsync(string modelName, IProgress<DownloadProgress> progress = null)
     {
+        try
+        {
             IProgress<PullModelResponse> progressReporter = new Progress<PullModelResponse>((response) =>
             {
                 if (progress != null && response.Status != null)
@@ -308,85 +379,85 @@ public async Task<DownloadStatus> DownloadModelAsync(string modelName, IProgress
                     progress.Report(downloadProgress);
                 }
             });
-        
-        // Request the model pull with streaming to get progress updates
-        var pullRequest = new PullModelRequest
-        {
-            Model = modelName,
-            Stream = true
-        };
-        
-        // Use the streaming API to get progress updates
-        await foreach (var update in _client.PullModelAsync(pullRequest))
-        {
-            progressReporter.Report(update);
-            
-            // Check if download is complete
-            if (update.Status == "success")
+
+            // Request the model pull with streaming to get progress updates
+            var pullRequest = new PullModelRequest
             {
-                progress?.Report(new DownloadProgress
+                Model = modelName,
+                Stream = true
+            };
+
+            // Use the streaming API to get progress updates
+            await foreach (var update in _client.PullModelAsync(pullRequest))
+            {
+                progressReporter.Report(update);
+
+                // Check if download is complete
+                if (update.Status == "success")
                 {
-                    ModelName = modelName,
-                    PercentComplete = 100,
-                    IsCompleted = true
-                });
-                
+                    progress?.Report(new DownloadProgress
+                    {
+                        ModelName = modelName,
+                        PercentComplete = 100,
+                        IsCompleted = true
+                    });
+
+                    return new DownloadStatus
+                    {
+                        Success = true,
+                        Message = "Model downloaded successfully"
+                    };
+                }
+            }
+
+            // If we get here, we should check if the model is now available
+            var models = await ListModelsAsync();
+            if (models.Any(m => m.Name == modelName || m.Name.StartsWith(modelName + ":")))
+            {
                 return new DownloadStatus
                 {
                     Success = true,
-                    Message = "Model downloaded successfully"
+                    Message = "Model download completed"
+                };
+            }
+            else
+            {
+                return new DownloadStatus
+                {
+                    Success = false,
+                    Message = "Download may have failed or is still in progress"
                 };
             }
         }
-        
-        // If we get here, we should check if the model is now available
-        var models = await ListModelsAsync();
-        if (models.Any(m => m.Name == modelName || m.Name.StartsWith(modelName + ":")))
-        {
-            return new DownloadStatus
-            {
-                Success = true,
-                Message = "Model download completed"
-            };
-        }
-        else
+        catch (Exception ex)
         {
             return new DownloadStatus
             {
                 Success = false,
-                Message = "Download may have failed or is still in progress"
+                Message = $"Error downloading model: {ex.Message}"
             };
         }
     }
-    catch (Exception ex)
-    {
-        return new DownloadStatus
-        {
-            Success = false,
-            Message = $"Error downloading model: {ex.Message}"
-        };
-    }
-}
 
-private int CalculateProgress(PullModelResponse response)
-{
-    // The PullModelResponse doesn't have consistent progress information
-    // We'll make a best effort estimate based on what's available
-    
-    if (response.Completed == response.Total && response.Total > 0)
+    private int CalculateProgress(PullModelResponse response)
     {
-        return (int)((response.Completed / (double)response.Total) * 100);
+        // The PullModelResponse doesn't have consistent progress information
+        // We'll make a best effort estimate based on what's available
+
+        if (response.Completed == response.Total && response.Total > 0)
+        {
+            return (int)((response.Completed / (double)response.Total) * 100);
+        }
+        else if (!string.IsNullOrEmpty(response.Status))
+        {
+            if (response.Status == "downloading")
+                return 50; // Generic progress indicator if we don't have specifics
+            else if (response.Status == "success")
+                return 100;
+        }
+
+        return 0; // Default if we can't determine progress
     }
-    else if (!string.IsNullOrEmpty(response.Status))
-    {
-        if (response.Status == "downloading")
-            return 50; // Generic progress indicator if we don't have specifics
-        else if (response.Status == "success")
-            return 100;
-    }
-    
-    return 0; // Default if we can't determine progress
-}
 
 }
 

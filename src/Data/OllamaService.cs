@@ -604,8 +604,6 @@ public class OllamaService
             }
 
             // If we get here, we should check if the model is now available
-
-            var models = await ListModelsAsync();
             _logger.LogInformation("Checking if model {ModelName} is now available", modelName);
             var models = await ListModelsAsync();
             if (models.Any(m => m.Name == modelName || m.Name.StartsWith(modelName + ":")))

@@ -1,3 +1,4 @@
+using OllamaModelScraper.Services;
 using src;
 using src.Data;
 
@@ -9,6 +10,7 @@ builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
 builder.Services.Configure<OllamaSettings>(builder.Configuration.GetSection("Ollama"));
 builder.Services.AddSingleton<OllamaService>();
+builder.Services.AddSingleton<ModelScraperService>();
 
 var app = builder.Build();
 

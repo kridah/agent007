@@ -3,6 +3,7 @@
 @using src.Data
 @inject OllamaService OllamaService
 @inject IJSRuntime JSRuntime
+@inject ILogger<Chat> Logger
 
 <PageTitle>Chat with LLM</PageTitle>
 
@@ -162,27 +163,36 @@
 
     protected override async Task OnInitializedAsync()
     {
+        Logger.LogTrace("OnInitializedAsync START");
+        Logger.LogInformation("OnInitializedAsync called");
         try
         {
             var models = await OllamaService.ListModelsAsync();
             availableModels = models.Select(m => m.Name).ToList();
-            
+            Logger.LogTrace("Model list loaded: {Models}", string.Join(",", availableModels));
+            Logger.LogInformation("Loaded {ModelCount} models", availableModels.Count);
             // Load saved model preference
             var savedModel = await LoadSelectedModelAsync();
+            Logger.LogTrace("Loaded savedModel: {SavedModel}", savedModel);
             if (!string.IsNullOrEmpty(savedModel) && availableModels.Contains(savedModel))
             {
                 selectedModel = savedModel;
+                Logger.LogTrace("selectedModel set to savedModel: {Model}", selectedModel);
+                Logger.LogInformation("Loaded saved model preference: {Model}", savedModel);
             }
             else if (availableModels.Count > 0 && !availableModels.Contains(selectedModel))
             {
                 selectedModel = availableModels[0];
+                Logger.LogTrace("selectedModel set to first available: {Model}", selectedModel);
+                Logger.LogInformation("Defaulted to first available model: {Model}", selectedModel);
             }
-            
+            Logger.LogTrace("OnInitializedAsync END");
             await base.OnInitializedAsync();
         }
         catch (Exception ex)
         {
-            // Handle error (could add an error message display)
+            Logger.LogError(ex, "Error loading models");
+            Logger.LogTrace("OnInitializedAsync ERROR: {Error}", ex);
             Console.WriteLine($"Error loading models: {ex.Message}");
         }
     }
@@ -191,131 +201,179 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        Logger.LogTrace("OnAfterRenderAsync called, firstRender={FirstRender}", firstRender);
         if (firstRender)
         {
             _isFirstRender = false;
-        
+            Logger.LogTrace("_isFirstRender set to false");
+            Logger.LogInformation("OnAfterRenderAsync first render");
             // Load saved model preference
             var savedModel = await LoadSelectedModelAsync();
+            Logger.LogTrace("Loaded savedModel: {SavedModel}", savedModel);
             if (!string.IsNullOrEmpty(savedModel) && availableModels.Contains(savedModel))
             {
                 selectedModel = savedModel;
+                Logger.LogTrace("selectedModel set to savedModel: {Model}", selectedModel);
+                Logger.LogInformation("Restored saved model preference: {Model}", savedModel);
             }
-        
             // Load saved chat history
             await LoadChatHistoryAsync();
-        
+            Logger.LogTrace("Chat history loaded, messages.Count={Count}", messages.Count);
+            Logger.LogInformation("Loaded chat history with {MessageCount} messages", messages.Count);
             StateHasChanged();
+            Logger.LogTrace("StateHasChanged called after first render");
         }
-    
         await base.OnAfterRenderAsync(firstRender);
     }
     
     private async Task LoadChatHistoryAsync()
     {
+        Logger.LogTrace("LoadChatHistoryAsync called");
         try
         {
             var json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", STORAGE_KEY);
+            Logger.LogTrace("localStorage.getItem returned: {Json}", json);
             if (!string.IsNullOrEmpty(json))
             {
                 messages = JsonSerializer.Deserialize<List<ChatMessage>>(json) ?? new List<ChatMessage>();
+                Logger.LogTrace("Deserialized messages: {Messages}", string.Join("|", messages.Select(m => m.Content)));
+                Logger.LogInformation("Loaded chat history from storage: {MessageCount} messages", messages.Count);
+            }
+            else
+            {
+                Logger.LogTrace("No chat history found in storage");
+                Logger.LogInformation("No chat history found in storage");
             }
         }
         catch (Exception ex)
         {
+            Logger.LogError(ex, "Error loading chat history");
+            Logger.LogTrace("LoadChatHistoryAsync ERROR: {Error}", ex);
             Console.WriteLine($"Error loading chat history: {ex.Message}");
         }
     }
     
     private async Task SaveChatHistoryAsync()
     {
+        Logger.LogTrace("SaveChatHistoryAsync called");
         try
         {
             var json = JsonSerializer.Serialize(messages);
+            Logger.LogTrace("Serialized messages: {Json}", json);
             await JSRuntime.InvokeVoidAsync("localStorage.setItem", STORAGE_KEY, json);
-            
+            Logger.LogTrace("localStorage.setItem for chat history complete");
+            Logger.LogInformation("Saved chat history: {MessageCount} messages", messages.Count);
             // Save selected model as well
             await JSRuntime.InvokeVoidAsync("localStorage.setItem", MODEL_KEY, selectedModel);
+            Logger.LogTrace("localStorage.setItem for selected model complete: {Model}", selectedModel);
+            Logger.LogInformation("Saved selected model: {Model}", selectedModel);
         }
         catch (Exception ex)
         {
+            Logger.LogError(ex, "Error saving chat history");
+            Logger.LogTrace("SaveChatHistoryAsync ERROR: {Error}", ex);
             Console.WriteLine($"Error saving chat history: {ex.Message}");
         }
     }
     
     private async Task<string> LoadSelectedModelAsync()
     {
+        Logger.LogTrace("LoadSelectedModelAsync called");
         try
         {
-            return await JSRuntime.InvokeAsync<string>("localStorage.getItem", MODEL_KEY);
+            var model = await JSRuntime.InvokeAsync<string>("localStorage.getItem", MODEL_KEY);
+            Logger.LogTrace("localStorage.getItem for model returned: {Model}", model);
+            Logger.LogInformation("Loaded selected model from storage: {Model}", model);
+            return model;
         }
-        catch
+        catch (Exception ex)
         {
+            Logger.LogError(ex, "Error loading selected model");
+            Logger.LogTrace("LoadSelectedModelAsync ERROR: {Error}", ex);
             return string.Empty;
         }
     }
 
     private async Task SendMessage()
     {
+        Logger.LogTrace("SendMessage called");
         if (string.IsNullOrWhiteSpace(userInput) || isGenerating)
+        {
+            Logger.LogTrace("SendMessage early exit: userInput empty or isGenerating");
             return;
-
+        }
+        Logger.LogInformation("User sending message: {Message}", userInput);
         // Add user message
         var userMessage = new ChatMessage { Content = userInput, IsUser = true };
         messages.Add(userMessage);
-        
+        Logger.LogTrace("User message added: {Message}", userInput);
         string currentInput = userInput;
         userInput = "";
-        
         isGenerating = true;
+        Logger.LogTrace("isGenerating set to true");
         StateHasChanged();
-
+        Logger.LogTrace("StateHasChanged called after user message");
         try
         {
             // Get AI response
             var response = await OllamaService.ChatAsync(currentInput, selectedModel);
-            
+            Logger.LogInformation("AI responded with {Length} characters", response?.Length ?? 0);
+            Logger.LogTrace("AI response: {Response}", response);
             // Add AI message
-            messages.Add(new ChatMessage { Content = response, IsUser = false });
-            
+            messages.Add(new ChatMessage { Content = response ?? string.Empty, IsUser = false });
+            Logger.LogTrace("AI message added");
             // Save the updated chat history
             await SaveChatHistoryAsync();
+            Logger.LogTrace("Chat history saved after AI response");
         }
         catch (Exception ex)
         {
+            Logger.LogError(ex, "Error during chat send");
+            Logger.LogTrace("SendMessage ERROR: {Error}", ex);
             // Add error message
             messages.Add(new ChatMessage { 
                 Content = $"Error: {ex.Message}", 
                 IsUser = false 
             });
-            
+            Logger.LogTrace("Error message added to chat");
             // Save even if there was an error
             await SaveChatHistoryAsync();
+            Logger.LogTrace("Chat history saved after error");
         }
         finally
         {
             isGenerating = false;
+            Logger.LogTrace("isGenerating set to false");
             StateHasChanged();
+            Logger.LogTrace("StateHasChanged called after send complete");
         }
     }
     // Add a method to clear chat history
     private async Task ClearChatHistory()
     {
+        Logger.LogTrace("ClearChatHistory called");
+        Logger.LogInformation("Clearing chat history");
         messages.Clear();
+        Logger.LogTrace("messages cleared");
         await SaveChatHistoryAsync();
+        Logger.LogTrace("Chat history saved after clear");
         StateHasChanged();
+        Logger.LogTrace("StateHasChanged called after clear");
     }
 
     private void HandleKeyDown(KeyboardEventArgs e)
     {
+        Logger.LogTrace("HandleKeyDown called: Key={Key}, Ctrl={Ctrl}", e.Key, e.CtrlKey);
         if (e.Key == "Enter" && e.CtrlKey)
         {
-            SendMessage();
+            Logger.LogTrace("Ctrl+Enter detected, calling SendMessage");
+            _ = SendMessage();
         }
     }
 
     private string FormatMessage(string content)
     {
+        Logger.LogTrace("FormatMessage called");
         // Simple conversion of newlines to <br> and preserving spaces
         return content
             .Replace("\n", "<br>")

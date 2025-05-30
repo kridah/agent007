@@ -1,4 +1,5 @@
 @page "/ollamamodels"
+@inject OllamaModelScraper.Services.ModelScraperService ModelScraperService
 @using src.Data
 @inject OllamaService OService
 @using OllamaSharp.Models
@@ -22,6 +23,7 @@ else
                     <th>Model Size</th>
                     <th>Parameter Size</th>
                     <th>Quantization</th>
+                    <th>Delete</th>
                 </tr>
             </thead>
             <tbody>
@@ -34,6 +36,11 @@ else
                         <td>@($"{model.Size / 1000000f:F2} MB")</td>
                         <td>@(model.Details.ParameterSize)</td>
                         <td>@(model.Details.QuantizationLevel)</td>
+                        <td>
+                            <button class="btn btn-danger" @onclick="() => DeleteModel(model.Name)">
+                                <i class="oi oi-trash"></i> Delete
+                            </button>
+                        </td>
                     </tr>
                 }
             </tbody>
@@ -101,6 +108,27 @@ else
     </div>
 }
 
+<h3>Available Ollama Models</h3>
+
+@if (models == null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <ul>
+        @foreach (var model in availableModelsFromApi)
+        {
+            <li>
+                <b>@model.Name</b>: @model.Description
+                <br />
+                @* Tags: @string.Join(", ", @model.Tags) *@
+            </li>
+        }
+    </ul>
+}
+
+
 @if (!string.IsNullOrEmpty(statusMessage))
 {
     <div class="alert @statusAlertClass alert-dismissible fade show mt-3" role="alert">
@@ -111,11 +139,12 @@ else
 
 @code {
     private IEnumerable<Model> models;
-    private List<OllamaService.AvailableModel> availableModels;
+    private List<OllamaService.AvailableModel>? availableModels;
     private string downloadingModel = "";
     private int downloadProgress = 0;
     private string statusMessage = "";
     private string statusAlertClass = "alert-info";
+    private List<OllamaModelScraper.Services.OllamaApiModel>? availableModelsFromApi;
 
     protected override async Task OnInitializedAsync()
     {
@@ -128,6 +157,7 @@ else
         {
             models = await OService.ListModelsAsync();
             availableModels = await OService.GetAvailableModelsAsync();
+            availableModelsFromApi = await ModelScraperService.FetchModelsFromApiAsync() ?? null;
             StateHasChanged();
         }
         catch (Exception ex)
@@ -164,6 +194,28 @@ else
         }
         
         downloadingModel = "";
+        await LoadData(); // Refresh the lists
+    }
+
+    private async Task DeleteModel(string modelName)
+    {
+        statusMessage = $"Deleting {modelName}...";
+        statusAlertClass = "alert-info";
+        StateHasChanged();
+        
+        var result = await OService.DeleteModelAsync(modelName);
+        
+        if (result.Success)
+        {
+            statusMessage = $"Successfully deleted {modelName}";
+            statusAlertClass = "alert-success";
+        }
+        else
+        {
+            statusMessage = $"Error deleting {modelName}: {result.Message}";
+            statusAlertClass = "alert-danger";
+        }
+        
         await LoadData(); // Refresh the lists
     }
     

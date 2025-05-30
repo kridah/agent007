@@ -1,4 +1,5 @@
 @page "/ollamamodels"
+@using Microsoft.Extensions.Logging
 @using src.Data
 @inject OllamaService OService
 @using OllamaSharp.Models
@@ -47,6 +48,7 @@ else
 @if (availableModels == null)
 {
     <p><em>Loading available models...</em></p>
+
 }
 else
 {
@@ -70,21 +72,21 @@ else
                                 <i class="oi oi-check"></i> Installed
                             </button>
                         }
-                        else if (downloadingModel == model.Name)
+                        else if (downloadProgressMap.ContainsKey(model.Name))
                         {
                             <div class="text-center">
                                 <div class="progress mb-3">
                                     <div class="progress-bar progress-bar-striped progress-bar-animated" 
                                          role="progressbar" 
-                                         style="width: @downloadProgress%;" 
-                                         aria-valuenow="@downloadProgress" 
+                                         style="width: @(downloadProgressMap.TryGetValue(model.Name, out var prog) ? prog : 0)%;" 
+                                         aria-valuenow="@(downloadProgressMap.TryGetValue(model.Name, out var prog2) ? prog2 : 0)" 
                                          aria-valuemin="0" 
                                          aria-valuemax="100">
-                                        @downloadProgress%
+                                        @(downloadProgressMap.TryGetValue(model.Name, out var prog3) ? prog3 : 0)%
                                     </div>
                                 </div>
-                                <button class="btn btn-warning w-100" disabled>
-                                    <i class="oi oi-clock"></i> Downloading...
+                                <button class="btn btn-warning w-100" @onclick="() => AbortDownload(model.Name)">
+                                    <i class="oi oi-clock"></i> Cancel Download
                                 </button>
                             </div>
                         }
@@ -110,18 +112,27 @@ else
 }
 
 @code {
+
+
+
+
+
+
+
     private IEnumerable<Model> models;
-    private List<OllamaService.AvailableModel> availableModels;
-    private string downloadingModel = "";
-    private int downloadProgress = 0;
+    private List<AvailableModel> availableModels;
+    private Dictionary<string, CancellationTokenSource> downloadCTS = new();
+    private Dictionary<string, int> downloadProgressMap = new();
     private string statusMessage = "";
     private string statusAlertClass = "alert-info";
+    [Inject]
+    private ILogger<OllamaModels> logger { get; set; }
 
     protected override async Task OnInitializedAsync()
     {
         await LoadData();
     }
-    
+
     private async Task LoadData()
     {
         try
@@ -136,37 +147,43 @@ else
             statusAlertClass = "alert-danger";
         }
     }
-    
+
     private async Task DownloadModel(string modelName)
     {
-        downloadingModel = modelName;
-        downloadProgress = 0;
-        statusMessage = $"Starting download of {modelName}...";
-        statusAlertClass = "alert-info";
-        StateHasChanged();
-        
-        var progress = new Progress<OllamaService.DownloadProgress>(p => {
-            downloadProgress = p.PercentComplete;
-            StateHasChanged();
+        var downloadCts = new CancellationTokenSource();
+        downloadCTS[modelName] = downloadCts;
+        downloadCts.Token.Register(() => {
+            statusMessage = $"Download cancelled for {modelName}.";
+            statusAlertClass = "alert-warning";
+            downloadCTS.Remove(modelName);
+            downloadProgressMap.Remove(modelName);
+            InvokeAsync(StateHasChanged);
         });
-        
-        var result = await OService.DownloadModelAsync(modelName, progress);
-        
-        if (result.Success)
+
+        _ = Task.Run(async () =>
         {
-            statusMessage = $"Successfully downloaded {modelName}";
-            statusAlertClass = "alert-success";
-        }
-        else
-        {
-            statusMessage = $"Error downloading {modelName}: {result.Message}";
-            statusAlertClass = "alert-danger";
-        }
-        
-        downloadingModel = "";
-        await LoadData(); // Refresh the lists
+            var result = await OService.DownloadModelAsync(modelName, progress =>
+            {
+                if (!downloadCTS.ContainsKey(modelName) || downloadCTS[modelName].IsCancellationRequested)
+                    return; // Don't update progress if cancelled
+
+                downloadProgressMap[modelName] = progress.PercentComplete;
+                InvokeAsync(StateHasChanged);
+            }, downloadCts.Token);
+
+            await LoadData();
+        });
     }
-    
+
+    private void AbortDownload(string modelName)
+    {
+        if (downloadCTS.TryGetValue(modelName, out var downloadCts))
+        {
+            logger.LogInformation($"Cancelling download for model: {modelName}");
+            downloadCts.Cancel();
+        }
+    }
+
     private void ClearStatusMessage()
     {
         statusMessage = "";

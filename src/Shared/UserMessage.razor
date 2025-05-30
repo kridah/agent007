@@ -1,0 +1,8 @@
+﻿<div class="message user-message">
+    <div class="message-header">You</div>
+    <div class="message-content">@((MarkupString)Content)</div>
+</div>
+
+@code {
+    [Parameter] public string Content { get; set; } = string.Empty;
+}

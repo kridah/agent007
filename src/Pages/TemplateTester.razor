@@ -99,7 +99,9 @@ Assistant: {{ $message.Content }}
         
         try
         {
-            result = await OllamaService.GenerateWithTemplateAsync(input: promptInput, template: templateContent, model: selectedModel);
+            //result = await OllamaService.GenerateWithTemplateAsync(input: promptInput, template: templateContent, model: selectedModel);
+            result = "not implemented yet"; // Placeholder for actual implementation"
+
         }
         catch (Exception ex)
         {

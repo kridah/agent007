@@ -86,6 +86,7 @@
 </div>
 
 @code {
+
     private Dictionary<string, string> savedTemplates = new();
     private string selectedTemplateName = "";
     private string templateName = "";
@@ -96,14 +97,14 @@
     private bool isGenerating = false;
     private string selectedModel = "llama3";
     private List<string> availableModels = new();
-    
+
     private const string TEMPLATES_STORAGE_KEY = "ollama_templates";
 
     protected override async Task OnInitializedAsync()
     {
         await LoadTemplatesAsync();
         await LoadModelsAsync();
-        
+
         // Add default templates if none exist
         if (savedTemplates.Count == 0)
         {
@@ -111,7 +112,7 @@
             savedTemplates.Add("JSON Output", "{{ if .System }}{{ .System }}{{ else }}You are a helpful AI assistant that outputs JSON.{{ end }}\n{{ range $i, $message := .Messages }}\n{{- if eq $message.Role \"user\" }}\nUser: {{ $message.Content }}\n{{ else if eq $message.Role \"assistant\" }}\nAssistant: {{ $message.Content }}\n{{ end }}\n{{ end }}\nAssistant: ```json\n");
             await SaveTemplatesAsync();
         }
-        
+
         if (!string.IsNullOrEmpty(selectedTemplateName) && savedTemplates.ContainsKey(selectedTemplateName))
         {
             templateContent = savedTemplates[selectedTemplateName];
@@ -123,14 +124,14 @@
             templateContent = savedTemplates[selectedTemplateName];
         }
     }
-    
+
     private async Task LoadModelsAsync()
     {
         try
         {
             var models = await OllamaService.ListModelsAsync();
             availableModels = models.Select(m => m.Name).ToList();
-            
+
             if (availableModels.Count > 0 && !availableModels.Contains(selectedModel))
             {
                 selectedModel = availableModels[0];
@@ -141,7 +142,7 @@
             Console.WriteLine($"Error loading models: {ex.Message}");
         }
     }
-    
+
     private async Task LoadTemplatesAsync()
     {
         try
@@ -157,7 +158,7 @@
             Console.WriteLine($"Error loading templates: {ex.Message}");
         }
     }
-    
+
     private async Task SaveTemplatesAsync()
     {
         try
@@ -170,7 +171,7 @@
             Console.WriteLine($"Error saving templates: {ex.Message}");
         }
     }
-    
+
     private void SelectTemplate(string name)
     {
         selectedTemplateName = name;
@@ -178,7 +179,7 @@
         templateContent = savedTemplates[name];
         isNewTemplate = false;
     }
-    
+
     private void CreateNewTemplate()
     {
         selectedTemplateName = "";
@@ -186,28 +187,28 @@
         templateContent = "";
         isNewTemplate = true;
     }
-    
+
     private async Task SaveTemplate()
     {
         if (string.IsNullOrWhiteSpace(templateName))
         {
             return;
         }
-        
+
         savedTemplates[templateName] = templateContent;
         selectedTemplateName = templateName;
         isNewTemplate = false;
-        
+
         await SaveTemplatesAsync();
     }
-    
+
     private async Task DeleteTemplate()
     {
         if (savedTemplates.ContainsKey(selectedTemplateName))
         {
             savedTemplates.Remove(selectedTemplateName);
             await SaveTemplatesAsync();
-            
+
             if (savedTemplates.Count > 0)
             {
                 SelectTemplate(savedTemplates.Keys.First());
@@ -218,20 +219,23 @@
             }
         }
     }
-    
+
     private async Task TestTemplate()
     {
         if (string.IsNullOrWhiteSpace(templateContent) || string.IsNullOrWhiteSpace(testInput))
         {
             return;
         }
-        
+
         isGenerating = true;
         StateHasChanged();
-        
+
         try
         {
-            testOutput = await OllamaService.GenerateWithTemplateAsync(testInput, templateContent, selectedModel);
+
+            //testOutput = await OllamaService.GenerateWithTemplateAsync(testInput, templateContent, selectedModel);
+
+            testOutput = "Not implemented yet";
         }
         catch (Exception ex)
         {

@@ -1,0 +1,9 @@
+﻿<div class="message ai-message">
+    <div class="message-header">@AgentName</div>
+    <div class="message-content">@((MarkupString)Content)</div>
+</div>
+
+@code {
+    [Parameter] public string AgentName { get; set; } = "Agent";
+    [Parameter] public string Content { get; set; } = string.Empty;
+}

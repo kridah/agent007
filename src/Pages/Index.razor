@@ -6,17 +6,4 @@
 
 <body>
     <p>Click the button below to see the installed models, or choose function from the menu.</p>
-
-    <button @onclick="ShowInstalledModels">Show Installed Models</button>
-
-    @code {
-
-        [Inject]
-        private NavigationManager Navigation { get; set; }
-
-        private void ShowInstalledModels()
-        {
-            Navigation.NavigateTo("/ollama/models");
-        }
-    }
 </body>

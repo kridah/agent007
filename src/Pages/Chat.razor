@@ -12,6 +12,10 @@
     <div class="message-container">
         @foreach (var message in messages)
         {
+            if (message.IsUser)
+            {
+                <UserMessage Content="@message.Content" />
+            } else if (message.is)
             <div class="message @(message.IsUser ? "user-message" : "ai-message")">
                 <div class="message-header">@(message.IsUser ? "You" : selectedModel)</div>
                  <div class="message-content">@((MarkupString)FormatMessage(message.Content))
@@ -156,7 +160,7 @@
     private bool isGenerating = false;
     private string selectedModel = "llama3";
     private List<string> availableModels = new() { "llama3" };
-    
+
     private const string STORAGE_KEY = "chat_history";
     private const string MODEL_KEY = "selected_model";
 
@@ -166,7 +170,7 @@
         {
             var models = await OllamaService.ListModelsAsync();
             availableModels = models.Select(m => m.Name).ToList();
-            
+
             // Load saved model preference
             var savedModel = await LoadSelectedModelAsync();
             if (!string.IsNullOrEmpty(savedModel) && availableModels.Contains(savedModel))
@@ -177,7 +181,7 @@
             {
                 selectedModel = availableModels[0];
             }
-            
+
             await base.OnInitializedAsync();
         }
         catch (Exception ex)
@@ -186,7 +190,7 @@
             Console.WriteLine($"Error loading models: {ex.Message}");
         }
     }
-    
+
     private bool _isFirstRender = true;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -194,23 +198,23 @@
         if (firstRender)
         {
             _isFirstRender = false;
-        
+
             // Load saved model preference
             var savedModel = await LoadSelectedModelAsync();
             if (!string.IsNullOrEmpty(savedModel) && availableModels.Contains(savedModel))
             {
                 selectedModel = savedModel;
             }
-        
+
             // Load saved chat history
             await LoadChatHistoryAsync();
-        
+
             StateHasChanged();
         }
-    
+
         await base.OnAfterRenderAsync(firstRender);
     }
-    
+
     private async Task LoadChatHistoryAsync()
     {
         try
@@ -226,14 +230,14 @@
             Console.WriteLine($"Error loading chat history: {ex.Message}");
         }
     }
-    
+
     private async Task SaveChatHistoryAsync()
     {
         try
         {
             var json = JsonSerializer.Serialize(messages);
             await JSRuntime.InvokeVoidAsync("localStorage.setItem", STORAGE_KEY, json);
-            
+
             // Save selected model as well
             await JSRuntime.InvokeVoidAsync("localStorage.setItem", MODEL_KEY, selectedModel);
         }
@@ -242,7 +246,7 @@
             Console.WriteLine($"Error saving chat history: {ex.Message}");
         }
     }
-    
+
     private async Task<string> LoadSelectedModelAsync()
     {
         try
@@ -261,12 +265,12 @@
             return;
 
         // Add user message
-        var userMessage = new ChatMessage { Content = userInput, IsUser = true };
+        var userMessage = new ChatMessage { Content = userInput, Role = "user" };
         messages.Add(userMessage);
-        
+
         string currentInput = userInput;
         userInput = "";
-        
+
         isGenerating = true;
         StateHasChanged();
 
@@ -274,10 +278,10 @@
         {
             // Get AI response
             var response = await OllamaService.ChatAsync(currentInput, selectedModel);
-            
+
             // Add AI message
-            messages.Add(new ChatMessage { Content = response, IsUser = false });
-            
+            messages.Add(new ChatMessage { Content = response, Role = "agent" });
+
             // Save the updated chat history
             await SaveChatHistoryAsync();
         }
@@ -288,7 +292,7 @@
                 Content = $"Error: {ex.Message}", 
                 IsUser = false 
             });
-            
+
             // Save even if there was an error
             await SaveChatHistoryAsync();
         }
@@ -322,9 +326,25 @@
             .Replace("  ", "&nbsp;&nbsp;");
     }
 
+    public enum MessageRole
+    {
+        User,
+        Agent,
+        Tool
+    }
+
+    public enum MessageStatus
+    {
+        Pending,
+        Generating,
+        Completed,
+        Error
+    }
+
     public class ChatMessage
     {
+        public MessageRole Role { get; set; } = MessageRole.User;
+        public MessageStatus Status { get; set; } = MessageStatus.Pending;
         public string Content { get; set; } = "";
-        public bool IsUser { get; set; }
     }
 }

@@ -1,0 +1,341 @@
+@page "/dynamic-multi-agent"
+@using src.Data
+@inject OllamaService OllamaService
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Dynamic Multi-Agent Conversation</PageTitle>
+
+<h1>Dynamic Multi-Agent Conversation</h1>
+
+<div class="dynamic-agent-section">
+    <h2>Dynamic Agent Conversation</h2>
+    <div class="dynamic-config-panel">
+        <div class="form-group">
+            <label for="managerModel">Manager Model:</label>
+            <select id="managerModel" class="form-control" @bind="managerModel" disabled="@isGenerating">
+                @foreach (var model in availableModels)
+                {
+                    <option value="@model">@model</option>
+                }
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="maxDynamicTurns">Max Dynamic Turns:</label>
+            <input id="maxDynamicTurns" type="number" class="form-control" @bind="maxDynamicTurns" min="1" max="10" disabled="@isGenerating" />
+        </div>
+        <div class="form-group">
+            <label for="dynamicPrompt">Initial Prompt:</label>
+            <textarea id="dynamicPrompt" class="form-control" @bind="initialPrompt" disabled="@isGenerating"></textarea>
+        </div>
+        <button class="start-button" @onclick="StartDynamicConversation" disabled="@isGenerating">
+            @if (isGenerating)
+            {
+                <span>Generating...</span>
+            }
+            else
+            {
+                <span>Start Dynamic Conversation</span>
+            }
+        </button>
+    </div>
+    <div class="dynamic-message-container">
+        @if (conversation.Count == 0)
+        {
+            <div class="empty-state">
+                <p>Start a dynamic multi-agent conversation</p>
+            </div>
+        }
+        else
+        {
+            @foreach (var message in conversation)
+            {
+                <div class="message @GetMessageClass(message.Role)">
+                    <div class="message-header">@GetDisplayRole(message.Role)</div>
+                    <div class="message-content">@((MarkupString)FormatMessage(message.Content))</div>
+                </div>
+            }
+        }
+        @if (isGenerating)
+        {
+            <div class="message thinking-message">
+                <div class="message-header">Generating...</div>
+                <div class="message-content">
+                    <div class="spinner"></div>
+                </div>
+            </div>
+        }
+    </div>
+    <div class="dynamic-user-input">
+        <input class="form-control" placeholder="Type your message..." @bind="userInput" @onkeydown="HandleUserInputKeyDown" disabled="@isGenerating" />
+        <button class="send-button" @onclick="SendUserMessage" disabled="@isGenerating || string.IsNullOrWhiteSpace(userInput)">Send</button>
+    </div>
+</div>
+
+<style>
+    .dynamic-agent-section {
+        margin-top: 40px;
+        padding: 20px;
+        background: #f7fafd;
+        border-radius: 8px;
+        border: 1px solid #e3e3e3;
+    }
+    .dynamic-config-panel {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        margin-bottom: 20px;
+    }
+    .dynamic-config-panel .form-group {
+        flex: 1 1 200px;
+        min-width: 200px;
+    }
+    .dynamic-message-container {
+        margin-top: 10px;
+    }
+    .dynamic-user-input {
+        display: flex;
+        gap: 10px;
+        margin-top: 20px;
+    }
+    .send-button {
+        min-width: 80px;
+    }
+</style>
+
+@code {
+    private List<Multiagent.MessageDisplay> conversation = new();
+    private List<string> availableModels = new() { "llama3.2", "gemma3", "mistral" };
+    private string managerModel = "llama3.2";
+    private int maxDynamicTurns = 5;
+    private string initialPrompt = "";
+    private string userInput = "";
+    private bool isGenerating = false;
+
+    private List<DynamicAgent> agents = new();
+
+    public class DynamicAgent
+    {
+        public string Name { get; set; } = "";
+        public string Model { get; set; } = "";
+    }
+
+    protected override void OnInitialized()
+    {
+        // Optionally load persisted state here
+    }
+
+    private async Task SendUserMessage()
+    {
+        if (string.IsNullOrWhiteSpace(userInput) || isGenerating)
+            return;
+
+        conversation.Add(new Multiagent.MessageDisplay
+        {
+            Role = "user",
+            Content = userInput
+        });
+
+        var prompt = userInput;
+        userInput = "";
+        await SaveConversationAsync();
+        StateHasChanged();
+
+        await GenerateDynamicAgentResponse(prompt);
+    }
+
+    private async Task GenerateDynamicAgentResponse(string prompt)
+    {
+        isGenerating = true;
+        StateHasChanged();
+
+        try
+        {
+            // Manager agent receives user prompt
+            if (!agents.Any())
+                agents.Add(new DynamicAgent { Name = "Manager", Model = managerModel });
+
+            var managerPrompt = prompt;
+
+            for (int turn = 0; turn < maxDynamicTurns; turn++)
+            {
+                var managerResponse = await OllamaService.GenerateAgentResponseAsync(
+                    managerPrompt,
+                    conversation,
+                    managerModel,
+                    $"You are the Manager agent. You can create new agents by specifying their name and model, and delegate tasks to them. Wait for their responses before continuing. Prompt = \"Always output your decisions as a JSON object with two arrays: \"agents\" (with \"name\" and \"model\") and \"tasks\" (with \"agentName\" and \"taskPrompt\")."
+                );
+
+                conversation.Add(new Multiagent.MessageDisplay
+                {
+                    Role = "manager",
+                    Content = managerResponse,
+                    ModelName = managerModel
+                });
+
+                await SaveConversationAsync();
+                StateHasChanged();
+
+                var newAgents = ParseAgentsFromResponse(managerResponse);
+                foreach (var agent in newAgents)
+                {
+                    if (!agents.Any(a => a.Name == agent.Name))
+                        agents.Add(agent);
+                }
+
+                var tasks = ParseTasksFromResponse(managerResponse);
+
+                if (tasks.Count == 0)
+                    break;
+
+                foreach (var task in tasks)
+                {
+                    var agent = agents.FirstOrDefault(a => a.Name == task.AgentName);
+                    if (agent == null) continue;
+
+                    var agentResponse = await OllamaService.GenerateAgentResponseAsync(
+                        task.TaskPrompt,
+                        conversation,
+                        agent.Model,
+                        $"You are agent {agent.Name}. Complete the assigned task and respond to the manager."
+                    );
+
+                    conversation.Add(new Multiagent.MessageDisplay
+                    {
+                        Role = agent.Name.ToLower(),
+                        Content = agentResponse,
+                        ModelName = agent.Model
+                    });
+
+                    await SaveConversationAsync();
+                    StateHasChanged();
+                }
+
+                managerPrompt = "All agents have responded. What is your next instruction?";
+            }
+        }
+        catch (Exception ex)
+        {
+            conversation.Add(new Multiagent.MessageDisplay
+            {
+                Role = "system",
+                Content = $"Error generating dynamic conversation: {ex.Message}"
+            });
+        }
+        finally
+        {
+            isGenerating = false;
+            await SaveConversationAsync();
+            StateHasChanged();
+        }
+    }
+
+    private async Task StartDynamicConversation()
+    {
+        if (string.IsNullOrWhiteSpace(initialPrompt) || isGenerating)
+            return;
+
+        conversation.Clear();
+        agents.Clear();
+
+        conversation.Add(new Multiagent.MessageDisplay
+        {
+            Role = "system",
+            Content = initialPrompt
+        });
+
+        await SaveConversationAsync();
+        StateHasChanged();
+
+        await GenerateDynamicAgentResponse(initialPrompt);
+    }
+
+    private List<DynamicAgent> ParseAgentsFromResponse(string response)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(response);
+            var agents = new List<DynamicAgent>();
+            if (doc.RootElement.TryGetProperty("agents", out var agentsElem))
+            {
+                foreach (var agentElem in agentsElem.EnumerateArray())
+                {
+                    agents.Add(new DynamicAgent
+                    {
+                        Name = agentElem.GetProperty("name").GetString() ?? "",
+                        Model = agentElem.GetProperty("model").GetString() ?? ""
+                    });
+                }
+            }
+            return agents;
+        }
+        catch
+        {
+            return new List<DynamicAgent>();
+        }
+    }
+
+    private List<(string AgentName, string TaskPrompt)> ParseTasksFromResponse(string response)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(response);
+            var tasks = new List<(string, string)>();
+            if (doc.RootElement.TryGetProperty("tasks", out var tasksElem))
+            {
+                foreach (var taskElem in tasksElem.EnumerateArray())
+                {
+                    var agentName = taskElem.GetProperty("agentName").GetString() ?? "";
+                    var taskPrompt = taskElem.GetProperty("taskPrompt").GetString() ?? "";
+                    tasks.Add((agentName, taskPrompt));
+                }
+            }
+            return tasks;
+        }
+        catch
+        {
+            return new List<(string, string)>();
+        }
+    }
+
+    private string GetMessageClass(string role)
+    {
+        return role switch
+        {
+            "user" => "user-message",
+            "manager" => "manager-message",
+            "system" => "system-message",
+            _ => "agent-message"
+        };
+    }
+
+    private string GetDisplayRole(string role)
+    {
+        return role switch
+        {
+            "user" => "User",
+            "manager" => "Manager",
+            "system" => "System",
+            _ => $"Agent: {role}"
+        };
+    }
+
+    private string FormatMessage(string content)
+    {
+        // Optionally format markdown or code blocks
+        return content.Replace("\n", "<br/>");
+    }
+
+    private async Task SaveConversationAsync()
+    {
+        // Optionally persist conversation state
+        await Task.CompletedTask;
+    }
+
+    private async Task HandleUserInputKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !isGenerating && !string.IsNullOrWhiteSpace(userInput))
+        {
+            await SendUserMessage();
+        }
+    }
+}

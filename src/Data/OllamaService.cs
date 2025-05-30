@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using OllamaSharp;
@@ -6,7 +5,6 @@ using OllamaSharp.Models;
 using OllamaSharp.Models.Chat;
 
 namespace src.Data;
-
 
 public class OllamaService
 {
@@ -20,7 +18,105 @@ public class OllamaService
         _client = new OllamaApiClient(options.Value.BaseUrl);
     }
 
-    public async Task<string> GenerateAsync(string prompt, string model = "llama3")
+    // demo tool call
+    public async Task<Message> CalculateFunction(string message, string model = "llama3.2")
+    {
+        Console.WriteLine("Calculating expression with model: {0}", model);
+        var responseStream = _client.ChatAsync(new ChatRequest
+        {
+            Model = model,
+            Messages = new List<Message>
+            {
+                new Message { Role = ChatRole.System, Content = "You are a calculator. Please evaluate the expression provided. Respond with a short poem related to the result." },
+                new Message { Role = ChatRole.User, Content = message }
+            },
+            Stream = false,
+            Tools = new List<Tool>
+            {
+                new Tool
+                {
+                    Type = "function",
+                    Function = new Function
+                    {
+                        Name = "calculate",
+                        Description = "Calculates a mathematical expression",
+                        Parameters = new Parameters
+                        {
+                            Type = "object",
+                            Properties = new Dictionary<string, Property>
+                            {
+                                {
+                                    "expression",
+                                    new Property
+                                    {
+                                        Type = "string",
+                                        Description = "The mathematical expression to calculate"
+                                    }
+                                }
+                            },
+                            Required = new List<string> { "expression" }
+                        }
+                    }
+                }
+            }
+        });
+        await foreach (var responseChunk in responseStream)
+        {
+            if (responseChunk?.Message.ToolCalls != null && responseChunk.Message.ToolCalls.Any())
+            {
+                // Extract the expression from the tool call
+                var toolCall = responseChunk.Message.ToolCalls.First();
+                var expression = toolCall.Function.Arguments["expression"].ToString();
+
+                // Evaluate the expression in C#
+                var result = EvaluateMathExpression(expression);
+
+                // Return a message with the result
+                return new Message
+                {
+                    Role = ChatRole.Assistant,
+                    Content = result.ToString()
+                };
+            }
+
+            // Normal message, just return it
+            return responseChunk.Message;
+        }
+
+        // If we reach here, no tool call was made
+        return new Message
+        {
+            Role = ChatRole.Assistant,
+            Content = "No valid mathematical expression found in the message."
+        };
+    }
+
+    // Example math evaluation (simple, for demo)
+    private object EvaluateMathExpression(string expression)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+            return "Invalid expression: empty input.";
+
+        // Only allow digits, whitespace, decimal points, and arithmetic operators
+        var allowedPattern = @"^[\d\s\.\+\-\*\/\(\)]+$";
+        if (!System.Text.RegularExpressions.Regex.IsMatch(expression, allowedPattern))
+            return "Invalid expression: only numbers and + - * / ( ) are allowed.";
+
+        try
+        {
+            // Prevent dangerous expressions (e.g., division by zero)
+            var table = new System.Data.DataTable();
+            table.CaseSensitive = false;
+            var value = table.Compute(expression, "");
+            return value;
+        }
+        catch
+        {
+            return "Invalid expression: could not evaluate.";
+        }
+    }
+
+    public async Task<string> GenerateAsync(string prompt, string model = "llama3.2")
     {
         _logger.LogInformation("Generating text with model: {Model}", model);
         _logger.LogDebug("Prompt length: {PromptLength} characters", prompt.Length);
@@ -44,7 +140,7 @@ public class OllamaService
         }
     }
 
-    public async Task<string> ChatAsync(string message, string model = "llama3")
+    public async Task<string> ChatAsync(string message, string model = "llama3.2")
     {
         _logger.LogInformation("Chatting with model: {Model}", model);
         _logger.LogDebug("Message length: {MessageLength} characters", message.Length);
@@ -101,8 +197,8 @@ public class OllamaService
     /// </summary>
     public async Task<string> CreateMultiAgentConversationAsync(
         string initialPrompt,
-        string firstModel = "llama3",
-        string secondModel = "llama3",
+        string firstModel = "llama3.2",
+        string secondModel = "llama3.2",
         int maxTurns = 3)
     {
         _logger.LogInformation("Starting multi-agent conversation between models {FirstModel} and {SecondModel} for {MaxTurns} turns", 
@@ -269,7 +365,7 @@ public class OllamaService
             throw;
         }
     }
-    
+
     public async Task<string> GenerateWithTemplateAsync(
         string model,
         string input,
@@ -302,7 +398,7 @@ public class OllamaService
         }
     }
 
-    public async Task<string> UseTemplateAsync(string prompt, string templateContent, string model = "llama3")
+    public async Task<string> UseTemplateAsync(string prompt, string templateContent, string model = "llama3.2")
     {
         _logger.LogInformation("Using custom template with model: {Model}", model);
         _logger.LogDebug("Prompt length: {PromptLength} characters, template content length: {TemplateLength} characters", 
@@ -344,6 +440,7 @@ public class OllamaService
             throw;
         }
     }
+
     
     public class AvailableModel
     {
@@ -452,6 +549,7 @@ public class OllamaService
     public async Task<DownloadStatus> DownloadModelAsync(string modelName, IProgress<DownloadProgress>? progress = null)
     {
         _logger.LogInformation("Starting download of model: {ModelName}", modelName);
+
         try
         {
             IProgress<PullModelResponse> progressReporter = new Progress<PullModelResponse>((response) =>
@@ -477,8 +575,6 @@ public class OllamaService
                 Model = modelName,
                 Stream = true
             };
-
-            _logger.LogInformation("Initiating model pull request for {ModelName}", modelName);
 
             // Use the streaming API to get progress updates
             await foreach (var update in _client.PullModelAsync(pullRequest))
@@ -508,11 +604,14 @@ public class OllamaService
             }
 
             // If we get here, we should check if the model is now available
+
+            var models = await ListModelsAsync();
             _logger.LogInformation("Checking if model {ModelName} is now available", modelName);
             var models = await ListModelsAsync();
             if (models.Any(m => m.Name == modelName || m.Name.StartsWith(modelName + ":")))
             {
                 _logger.LogInformation("Model {ModelName} is now available", modelName);
+
                 return new DownloadStatus
                 {
                     Success = true,
@@ -544,7 +643,6 @@ public class OllamaService
     {
         // The PullModelResponse doesn't have consistent progress information
         // We'll make a best effort estimate based on what's available
-        
         if (response.Completed == response.Total && response.Total > 0)
         {
             return (int)((response.Completed / (double)response.Total) * 100);
@@ -555,8 +653,7 @@ public class OllamaService
                 return 50; // Generic progress indicator if we don't have specifics
             else if (response.Status == "success")
                 return 100;
-        }
-        
+        }        
         return 0; // Default if we can't determine progress
     }
 }

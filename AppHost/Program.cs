@@ -1,5 +1,10 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
-var webapp = builder.AddProject<Projects.src>("webapp");
+var ollama = builder.AddOllama("ollama")
+                    .WithOpenWebUI()
+                    .AddModel("llama3.2");
+
+var webapp = builder.AddProject<Projects.src>("webapp")
+.WithReference(ollama);
 
 builder.Build().Run();

@@ -11,9 +11,10 @@ public class OllamaService
     private readonly ILogger<OllamaService> _logger;
     private readonly OllamaApiClient _client;
 
-
-    public OllamaService(IOptions<OllamaSettings> options)
+    public OllamaService(IOptions<OllamaSettings> options, ILogger<OllamaService> logger)
     {
+        _logger = logger;
+        _logger.LogInformation("Ollama API URL: {Url}", options.Value.BaseUrl);    
         _client = new OllamaApiClient(options.Value.BaseUrl);
     }
 
@@ -117,40 +118,78 @@ public class OllamaService
 
     public async Task<string> GenerateAsync(string prompt, string model = "llama3.2")
     {
-        var response = await _client.GenerateAsync(new GenerateRequest
+        _logger.LogInformation("Generating text with model: {Model}", model);
+        _logger.LogDebug("Prompt length: {PromptLength} characters", prompt.Length);
+        
+        try
         {
-            Model = model,
-            Prompt = prompt,
-        }).StreamToEndAsync();
+            var response = await _client.GenerateAsync(new GenerateRequest
+            {
+                Model = model,
+                Prompt = prompt
+            }).StreamToEndAsync();
 
-        return response.Response;
+            var responseText = response.Response ?? string.Empty;
+            _logger.LogInformation("Text generation completed. Generated {ResponseLength} characters", responseText.Length);
+            return responseText;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating text with model {Model}", model);
+            throw;
+        }
     }
 
     public async Task<string> ChatAsync(string message, string model = "llama3.2")
     {
         _logger.LogInformation("Chatting with model: {Model}", model);
-        var response = await _client.ChatAsync(new ChatRequest
+        _logger.LogDebug("Message length: {MessageLength} characters", message.Length);
+        
+        try
         {
-            Model = model,
-            Messages = new List<Message>
+            var response = await _client.ChatAsync(new ChatRequest
             {
-                new Message { Role = ChatRole.User, Content = message }
-            },
-            Stream = true,
-        }).StreamToEndAsync();
+                Model = model,
+                Messages = new List<OllamaSharp.Models.Chat.Message>
+                {
+                    new Message { Role = OllamaSharp.Models.Chat.ChatRole.User, Content = message }
+                },
+                Stream = true
+            }).StreamToEndAsync();
 
-        return response.Message.Content;
+            var content = response.Message?.Content ?? string.Empty;
+            _logger.LogInformation("Chat response received. Length: {ResponseLength} characters", content.Length);
+            return content;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error chatting with model {Model}", model);
+            throw;
+        }
     }
 
+    // TODO: Fetch model list from https://ollama.com/library
     public async Task<IEnumerable<Model>> ListModelsAsync()
     {
-        var models = await _client.ListLocalModelsAsync();
-        return models;
+        _logger.LogInformation("Listing available Ollama models");
+        try
+        {
+            var models = await _client.ListLocalModelsAsync();
+            _logger.LogInformation("Found {ModelCount} installed models", models.Count());
+            return models;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error listing Ollama models");
+            throw;
+        }
     }
 
     public string GetBaseUrl()
     {
-        return Environment.GetEnvironmentVariable("OLLAMA_API_URL") ?? "http://localhost:11434";
+        var url = Environment.GetEnvironmentVariable("OLLAMA_API_URL") ?? "http://localhost:11434";
+        _logger.LogDebug("Using Ollama API base URL: {Url}", url);
+        return url;
     }
 
     /// <summary>
@@ -162,67 +201,94 @@ public class OllamaService
         string secondModel = "llama3.2",
         int maxTurns = 3)
     {
-        var conversation = new List<Message>();
-
-        // Add the initial prompt as system message
-        conversation.Add(new Message
+        _logger.LogInformation("Starting multi-agent conversation between models {FirstModel} and {SecondModel} for {MaxTurns} turns", 
+            firstModel, secondModel, maxTurns);
+        _logger.LogDebug("Initial prompt length: {PromptLength} characters", initialPrompt.Length);
+        
+        try
         {
-            Role = ChatRole.System,
-            Content = initialPrompt
-        });
+            var conversation = new List<Message>();
 
-        string latestResponse = "Let's discuss this topic.";
-
-        // Alternate between models for the specified number of turns
-        for (int i = 0; i < maxTurns; i++)
-        {
-            // First model responds
+            // Add the initial prompt as system message
             conversation.Add(new Message
             {
-                Role = ChatRole.User,
-                Content = latestResponse
+                Role = ChatRole.System,
+                Content = initialPrompt
             });
 
-            var firstModelResponse = await _client.ChatAsync(new ChatRequest
-            {
-                Model = firstModel,
-                Messages = conversation
-            }).StreamToEndAsync();
+            string latestResponse = "Let's discuss this topic.";
 
-            latestResponse = firstModelResponse.Message.Content;
-            conversation.Add(new Message
+            // Alternate between models for the specified number of turns
+            for (int i = 0; i < maxTurns; i++)
             {
-                Role = ChatRole.Assistant,
-                Content = latestResponse
-            });
+                _logger.LogInformation("Starting conversation turn {TurnNumber}/{MaxTurns}", i + 1, maxTurns);
+                
+                // First model responds
+                conversation.Add(new Message
+                {
+                    Role = ChatRole.User,
+                    Content = latestResponse
+                });
 
-            // Second model responds
-            conversation.Add(new Message
-            {
-                Role = ChatRole.User,
-                Content = latestResponse
-            });
+                _logger.LogDebug("Sending message to first model {Model}", firstModel);
+                var firstModelResponse = await _client.ChatAsync(new ChatRequest
+                {
+                    Model = firstModel,
+                    Messages = conversation
+                }).StreamToEndAsync();
 
-            var secondModelResponse = await _client.ChatAsync(new ChatRequest
-            {
-                Model = secondModel,
-                Messages = conversation
-            }).StreamToEndAsync();
+                var firstModelContent = firstModelResponse.Message?.Content ?? string.Empty;
+                latestResponse = firstModelContent;
+                _logger.LogDebug("First model response length: {ResponseLength} characters", firstModelContent.Length);
+                
+                conversation.Add(new Message
+                {
+                    Role = ChatRole.Assistant,
+                    Content = latestResponse
+                });
 
-            latestResponse = secondModelResponse.Message.Content;
-            conversation.Add(new Message
-            {
-                Role = ChatRole.Assistant,
-                Content = latestResponse
-            });
+                // Second model responds
+                conversation.Add(new Message
+                {
+                    Role = ChatRole.User,
+                    Content = latestResponse
+                });
+
+                _logger.LogDebug("Sending message to second model {Model}", secondModel);
+                var secondModelResponse = await _client.ChatAsync(new ChatRequest
+                {
+                    Model = secondModel,
+                    Messages = conversation
+                }).StreamToEndAsync();
+
+                var secondModelContent = secondModelResponse.Message?.Content ?? string.Empty;
+                latestResponse = secondModelContent;
+                _logger.LogDebug("Second model response length: {ResponseLength} characters", secondModelContent.Length);
+                
+                conversation.Add(new Message
+                {
+                    Role = ChatRole.Assistant,
+                    Content = latestResponse
+                });
+            }
+
+            _logger.LogInformation("Multi-agent conversation completed with {TurnCount} turns and {MessageCount} messages", 
+                maxTurns, conversation.Count);
+                
+            // Return the full conversation as a formatted string
+            return FormatConversation(conversation);
         }
-
-        // Return the full conversation as a formatted string
-        return FormatConversation(conversation);
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in multi-agent conversation between {FirstModel} and {SecondModel}", 
+                firstModel, secondModel);
+            throw;
+        }
     }
 
     private string FormatConversation(List<Message> conversation)
     {
+        _logger.LogDebug("Formatting conversation with {MessageCount} messages", conversation.Count);
         var result = new System.Text.StringBuilder();
 
         foreach (var message in conversation)
@@ -234,52 +300,70 @@ public class OllamaService
         return result.ToString();
     }
 
-    // Add this method to your OllamaService class
     public async Task<string> GenerateAgentResponseAsync(
         string latestMessage,
         List<Pages.Multiagent.MessageDisplay> conversation,
         string model,
         string systemInstruction)
     {
-        // Convert the UI messages to the format expected by Ollama
-        var ollamaMessages = new List<Message>();
-
-        // Add system instruction
-        ollamaMessages.Add(new Message
+        _logger.LogInformation("Generating agent response with model {Model}", model);
+        _logger.LogDebug("Latest message length: {MessageLength}, conversation has {MessageCount} messages", 
+            latestMessage.Length, conversation?.Count ?? 0);
+            
+        try
         {
-            Role = ChatRole.System,
-            Content = systemInstruction
-        });
+            // Convert the UI messages to the format expected by Ollama
+            var ollamaMessages = new List<Message>();
 
-        // Add conversation history
-        foreach (var msg in conversation)
-        {
-            // Skip system messages in the history to avoid confusion
-            if (msg.Role == "system")
-                continue;
+            // Add system instruction
+            ollamaMessages.Add(new Message
+            {
+                Role = ChatRole.System,
+                Content = systemInstruction
+            });
 
+            // Add conversation history
+            if (conversation != null)
+            {
+                foreach (var msg in conversation)
+                {
+                    // Skip system messages in the history to avoid confusion
+                    if (msg.Role == "system")
+                        continue;
+
+                    ollamaMessages.Add(new Message
+                    {
+                        Role = ChatRole.User,
+                        Content = msg.Content ?? string.Empty
+                    });
+                }
+            }
+
+            // Add the latest message
             ollamaMessages.Add(new Message
             {
                 Role = ChatRole.User,
-                Content = msg.Content
+                Content = latestMessage
             });
+
+            _logger.LogDebug("Sending {MessageCount} messages to model", ollamaMessages.Count);
+            
+            // Send request to Ollama
+            var response = await _client.ChatAsync(new ChatRequest
+            {
+                Model = model,
+                Messages = ollamaMessages
+            }).StreamToEndAsync();
+
+            var content = response.Message?.Content ?? string.Empty;
+            _logger.LogInformation("Agent response generated. Length: {ResponseLength} characters", content.Length);
+            return content;
         }
-
-        // Add the latest message
-        ollamaMessages.Add(new Message
+        catch (Exception ex)
         {
-            Role = ChatRole.User,
-            Content = latestMessage
-        });
-
-        // Send request to Ollama
-        var response = await _client.ChatAsync(new ChatRequest
-        {
-            Model = model,
-            Messages = ollamaMessages
-        }).StreamToEndAsync();
-
-        return response.Message.Content;
+            _logger.LogError(ex, "Error generating agent response with model {Model}", model);
+            throw;
+        }
     }
 
     public async Task<string> GenerateWithTemplateAsync(
@@ -287,58 +371,89 @@ public class OllamaService
         string input,
         string template)
     {
-        // Create a generate request with custom template
-        var request = new GenerateRequest
+        _logger.LogInformation("Generating text with template using model: {Model}", model);
+        _logger.LogDebug("Input length: {InputLength} characters, template length: {TemplateLength} characters", 
+            input.Length, template?.Length ?? 0);
+            
+        try
         {
-            Model = model,
-            Prompt = input,
-            Template = template,
-            Stream = false
-        };
+            // Create a generate request with custom template
+            var request = new GenerateRequest
+            {
+                Model = model,
+                Prompt = input,
+                Template = template,
+                Stream = false
+            };
 
-        var response = await _client.GenerateAsync(request).StreamToEndAsync();
-        return response.Response;
+            var response = await _client.GenerateAsync(request).StreamToEndAsync();
+            var responseText = response.Response ?? string.Empty;
+            _logger.LogInformation("Template-based generation completed. Generated {ResponseLength} characters", responseText.Length);
+            return responseText;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating with template using model {Model}", model);
+            throw;
+        }
     }
 
     public async Task<string> UseTemplateAsync(string prompt, string templateContent, string model = "llama3.2")
     {
-        using var client = new HttpClient();
-        client.BaseAddress = new Uri("http://localhost:11434");
-
-        var requestBody = new
+        _logger.LogInformation("Using custom template with model: {Model}", model);
+        _logger.LogDebug("Prompt length: {PromptLength} characters, template content length: {TemplateLength} characters", 
+            prompt.Length, templateContent?.Length ?? 0);
+            
+        try
         {
-            model = model,
-            prompt = prompt,
-            template = templateContent,
-            stream = false
-        };
+            using var client = new HttpClient();
+            client.BaseAddress = new Uri(GetBaseUrl());
 
-        var content = new StringContent(
-            JsonSerializer.Serialize(requestBody),
-            System.Text.Encoding.UTF8,
-            "application/json");
+            var requestBody = new
+            {
+                model = model,
+                prompt = prompt,
+                template = templateContent,
+                stream = false
+            };
 
-        var response = await client.PostAsync("/api/generate", content);
-        response.EnsureSuccessStatusCode();
+            var content = new StringContent(
+                JsonSerializer.Serialize(requestBody),
+                System.Text.Encoding.UTF8,
+                "application/json");
 
-        var result = await response.Content.ReadAsStringAsync();
-        var jsonResponse = JsonSerializer.Deserialize<JsonElement>(result);
+            _logger.LogDebug("Sending template request to Ollama API");
+            var response = await client.PostAsync("/api/generate", content);
+            response.EnsureSuccessStatusCode();
 
-        return jsonResponse.GetProperty("response").GetString() ?? string.Empty;
+            var result = await response.Content.ReadAsStringAsync();
+            var jsonResponse = JsonSerializer.Deserialize<JsonElement>(result);
+
+            var responseText = jsonResponse.GetProperty("response").GetString() ?? string.Empty;
+            _logger.LogInformation("Template-based generation through HTTP completed. Generated {ResponseLength} characters", 
+                responseText.Length);
+            return responseText;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error using template with model {Model}", model);
+            throw;
+        }
     }
 
+    
     public class AvailableModel
     {
-        public string Name { get; set; }
-        public string DisplayName { get; set; }
-        public string Description { get; set; }
-        public string Size { get; set; }
+        public required string Name { get; set; }
+        public required string DisplayName { get; set; }
+        public required string Description { get; set; }
+        public required string Size { get; set; }
         public bool IsInstalled { get; set; }
     }
 
     public class DownloadProgress
     {
-        public string ModelName { get; set; }
+        public required string ModelName { get; set; }
         public long BytesDownloaded { get; set; }
         public long TotalBytes { get; set; }
         public int PercentComplete { get; set; }
@@ -348,109 +463,98 @@ public class OllamaService
     public class DownloadStatus
     {
         public bool Success { get; set; }
-        public string Message { get; set; }
+        public required string Message { get; set; }
     }
+
 
     public async Task<List<AvailableModel>> GetAvailableModelsAsync()
     {
-        // Since OllamaSharp doesn't provide a direct method to list downloadable models,
-        // we'll use a curated list of popular models
-        var availableModels = new List<AvailableModel>
+        _logger.LogInformation("Getting available Ollama models");
+        try
         {
-            new AvailableModel
+            // Since OllamaSharp doesn't provide a direct method to list downloadable models,
+            // we'll use a curated list of popular models
+            var availableModels = new List<AvailableModel>
             {
-                Name = "llama3", DisplayName = "Llama 3 8B", Description = "Meta's Llama 3 8B model", Size = "4.7 GB"
-            },
-            new AvailableModel
+                new AvailableModel { Name = "llama3.2:latest", DisplayName = "Llama 3.2 8B", Description = "Meta's Llama 3.2 1B model", Size = "2.0 GB" },
+                new AvailableModel { Name = "llama3", DisplayName = "Llama 3 8B", Description = "Meta's Llama 3 8B model", Size = "4.7 GB" },
+                new AvailableModel { Name = "granite3.2:2b", DisplayName = "Granite 3.2 2B", Description = "IBM Granite-3.2 2B model.", Size = "1.5 GB" },
+                new AvailableModel { Name = "llama3:8b", DisplayName = "Llama 3 8B", Description = "Meta's Llama 3 8B model", Size = "4.7 GB" },
+                new AvailableModel { Name = "llama3:70b", DisplayName = "Llama 3 70B", Description = "Meta's Llama 3 70B model", Size = "39.8 GB" },
+                new AvailableModel { Name = "mistral", DisplayName = "Mistral 7B", Description = "Mistral AI's 7B model", Size = "4.1 GB" },
+                new AvailableModel { Name = "mixtral", DisplayName = "Mixtral 8x7B", Description = "Mistral AI's mixture of experts model", Size = "26.1 GB" },
+                new AvailableModel { Name = "gemma:2b", DisplayName = "Gemma 2B", Description = "Google's lightweight Gemma model", Size = "1.4 GB" },
+                new AvailableModel { Name = "gemma:7b", DisplayName = "Gemma 7B", Description = "Google's Gemma model", Size = "4.8 GB" },
+                new AvailableModel { Name = "phi3", DisplayName = "Phi-3 Mini", Description = "Microsoft's Phi-3 Mini model", Size = "4.1 GB" },
+                new AvailableModel { Name = "codellama", DisplayName = "CodeLlama 7B", Description = "Meta's CodeLlama for code generation", Size = "4.2 GB" },
+                new AvailableModel { Name = "nous-hermes2", DisplayName = "Nous Hermes 2", Description = "Fine-tuned model by Nous Research", Size = "4.5 GB" },
+                new AvailableModel { Name = "llava", DisplayName = "LLaVA", Description = "Large language and vision assistant", Size = "4.5 GB" },
+                new AvailableModel { Name = "neural-chat", DisplayName = "Neural Chat", Description = "Intel's Neural Chat model", Size = "4.1 GB" },
+                new AvailableModel { Name = "solar", DisplayName = "SOLAR", Description = "Upstage's SOLAR model", Size = "4.2 GB" },
+                new AvailableModel { Name = "stable-code", DisplayName = "Stable Code", Description = "Model optimized for code generation", Size = "4.1 GB" },
+                new AvailableModel { Name = "whisper", DisplayName = "Whisper", Description = "OpenAI's speech recognition model", Size = "1.5 GB" }
+            };
+
+            // Check which models are already installed
+            var installedModels = await ListModelsAsync();
+            var installedModelNames = installedModels.Select(m => m.Name.Split(':')[0].ToLower()).ToHashSet();
+
+            foreach (var model in availableModels)
             {
-                Name = "granite3.2:2b", DisplayName = "Granite 3.2 2B",
-                Description =
-                    "Granite-3.2 is a family of long-context AI models from IBM Granite fine-tuned for thinking capabilities.",
-                Size = "1.5 GB"
-            },
-            new AvailableModel
-            {
-                Name = "llama3:8b", DisplayName = "Llama 3 8B", Description = "Meta's Llama 3 8B model", Size = "4.7 GB"
-            },
-            new AvailableModel
-            {
-                Name = "llama3:70b", DisplayName = "Llama 3 70B", Description = "Meta's Llama 3 70B model",
-                Size = "39.8 GB"
-            },
-            new AvailableModel
-            {
-                Name = "mistral", DisplayName = "Mistral 7B", Description = "Mistral AI's 7B model", Size = "4.1 GB"
-            },
-            new AvailableModel
-            {
-                Name = "mixtral", DisplayName = "Mixtral 8x7B", Description = "Mistral AI's mixture of experts model",
-                Size = "26.1 GB"
-            },
-            new AvailableModel
-            {
-                Name = "gemma:2b", DisplayName = "Gemma 2B", Description = "Google's lightweight Gemma model",
-                Size = "1.4 GB"
-            },
-            new AvailableModel
-                { Name = "gemma:7b", DisplayName = "Gemma 7B", Description = "Google's Gemma model", Size = "4.8 GB" },
-            new AvailableModel
-            {
-                Name = "phi3", DisplayName = "Phi-3 Mini", Description = "Microsoft's Phi-3 Mini model", Size = "4.1 GB"
-            },
-            new AvailableModel
-            {
-                Name = "codellama", DisplayName = "CodeLlama 7B", Description = "Meta's CodeLlama for code generation",
-                Size = "4.2 GB"
-            },
-            new AvailableModel
-            {
-                Name = "nous-hermes2", DisplayName = "Nous Hermes 2", Description = "Fine-tuned model by Nous Research",
-                Size = "4.5 GB"
-            },
-            new AvailableModel
-            {
-                Name = "llava", DisplayName = "LLaVA", Description = "Large language and vision assistant",
-                Size = "4.5 GB"
-            },
-            new AvailableModel
-            {
-                Name = "neural-chat", DisplayName = "Neural Chat", Description = "Intel's Neural Chat model",
-                Size = "4.1 GB"
-            },
-            new AvailableModel
-                { Name = "solar", DisplayName = "SOLAR", Description = "Upstage's SOLAR model", Size = "4.2 GB" },
-            new AvailableModel
-            {
-                Name = "stable-code", DisplayName = "Stable Code", Description = "Model optimized for code generation",
-                Size = "4.1 GB"
-            },
-            new AvailableModel
-            {
-                Name = "whisper", DisplayName = "Whisper", Description = "OpenAI's speech recognition model",
-                Size = "1.5 GB"
+                var baseName = model.Name.Split(':')[0].ToLower();
+                model.IsInstalled = installedModelNames.Contains(baseName);
             }
-        };
 
-        // Check which models are already installed
-        var installedModels = await ListModelsAsync();
-        var installedModelNames = installedModels.Select(m => m.Name.Split(':')[0].ToLower()).ToHashSet();
-
-        foreach (var model in availableModels)
-        {
-            var baseName = model.Name.Split(':')[0].ToLower();
-            model.IsInstalled = installedModelNames.Contains(baseName);
+            _logger.LogInformation("Retrieved {TotalCount} available models, {InstalledCount} are installed",
+                availableModels.Count, availableModels.Count(m => m.IsInstalled));
+            return availableModels;
         }
-
-        return availableModels;
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting available Ollama models");
+            throw;
+        }
     }
 
-    public async Task<DownloadStatus> DownloadModelAsync(string modelName, IProgress<DownloadProgress> progress = null)
+    public async Task<DownloadStatus> DeleteModelAsync(string modelName)
     {
+        _logger.LogInformation("Deleting model: {ModelName}", modelName);
+        try
+        {
+            var deleteRequest = new DeleteModelRequest
+            {
+                Model = modelName
+            };
+
+            await _client.DeleteModelAsync(deleteRequest);
+            _logger.LogInformation("Model {ModelName} deleted successfully", modelName);
+            return new DownloadStatus
+            {
+                Success = true,
+                Message = "Model deleted successfully"
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting model {ModelName}", modelName);
+            return new DownloadStatus
+            {
+                Success = false,
+                Message = $"Error deleting model: {ex.Message}"
+            };
+        }
+    }
+
+    // TODO: Allow the user to specify a model
+    public async Task<DownloadStatus> DownloadModelAsync(string modelName, IProgress<DownloadProgress>? progress = null)
+    {
+        _logger.LogInformation("Starting download of model: {ModelName}", modelName);
+
         try
         {
             IProgress<PullModelResponse> progressReporter = new Progress<PullModelResponse>((response) =>
             {
-                if (progress != null && response.Status != null)
+                if (progress != null && response?.Status != null)
                 {
                     // Ollama API doesn't consistently provide download stats through the client
                     // But we'll handle what we can
@@ -461,6 +565,7 @@ public class OllamaService
                     };
 
                     progress.Report(downloadProgress);
+                    _logger.LogDebug("Model download progress: {ProgressPercent}%", downloadProgress.PercentComplete);
                 }
             });
 
@@ -474,30 +579,39 @@ public class OllamaService
             // Use the streaming API to get progress updates
             await foreach (var update in _client.PullModelAsync(pullRequest))
             {
-                progressReporter.Report(update);
-
-                // Check if download is complete
-                if (update.Status == "success")
+                if (update != null)
                 {
-                    progress.Report(new DownloadProgress
-                    {
-                        ModelName = modelName,
-                        PercentComplete = 100,
-                        IsCompleted = true
-                    });
+                    progressReporter.Report(update);
 
-                    return new DownloadStatus
+                    // Check if download is complete
+                    if (update.Status == "success")
                     {
-                        Success = true,
-                        Message = "Model downloaded successfully"
-                    };
+                        progress?.Report(new DownloadProgress
+                        {
+                            ModelName = modelName,
+                            PercentComplete = 100,
+                            IsCompleted = true
+                        });
+
+                        _logger.LogInformation("Model {ModelName} download completed successfully", modelName);
+                        return new DownloadStatus
+                        {
+                            Success = true,
+                            Message = "Model downloaded successfully"
+                        };
+                    }
                 }
             }
 
             // If we get here, we should check if the model is now available
+
+            var models = await ListModelsAsync();
+            _logger.LogInformation("Checking if model {ModelName} is now available", modelName);
             var models = await ListModelsAsync();
             if (models.Any(m => m.Name == modelName || m.Name.StartsWith(modelName + ":")))
             {
+                _logger.LogInformation("Model {ModelName} is now available", modelName);
+
                 return new DownloadStatus
                 {
                     Success = true,
@@ -506,6 +620,7 @@ public class OllamaService
             }
             else
             {
+                _logger.LogWarning("Model {ModelName} download may have failed or is still in progress", modelName);
                 return new DownloadStatus
                 {
                     Success = false,
@@ -515,6 +630,7 @@ public class OllamaService
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Error downloading model {ModelName}", modelName);
             return new DownloadStatus
             {
                 Success = false,
@@ -527,7 +643,6 @@ public class OllamaService
     {
         // The PullModelResponse doesn't have consistent progress information
         // We'll make a best effort estimate based on what's available
-
         if (response.Completed == response.Total && response.Total > 0)
         {
             return (int)((response.Completed / (double)response.Total) * 100);
@@ -538,8 +653,7 @@ public class OllamaService
                 return 50; // Generic progress indicator if we don't have specifics
             else if (response.Status == "success")
                 return 100;
-        }
-
+        }        
         return 0; // Default if we can't determine progress
     }
 }

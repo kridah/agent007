@@ -93,7 +93,7 @@
     </div>
 
     <!-- Message Body (for non-tool messages OR tool messages without children) -->
-    @if (Message.Role != "tool" || !HasChildMessages())
+    @if (Message.Role != "tool")
     {
         <div class="message-body">
             @if (IsGenerating && string.IsNullOrEmpty(Message.Body))
@@ -112,13 +112,28 @@
                     @Message.Body
                 </div>
             }
-            else
+            else if (!string.IsNullOrEmpty(Message.Body))
             {
                 <div class="simple-content">
                     <div style="white-space: pre-wrap;">@Message.Body</div>
                 </div>
             }
         </div>
+    }
+    else
+    {
+        <!-- For tool messages, show spinner if generating and no body content -->
+        @if (IsGenerating && string.IsNullOrEmpty(Message.Body))
+        {
+            <div class="message-body">
+                <div class="thinking-indicator d-flex align-items-center">
+                    <div class="spinner-border spinner-border-sm me-2" role="status">
+                        <span class="visually-hidden">Working...</span>
+                    </div>
+                    <span class="text-muted">@(Message.AgentName ?? "Tool") is working...</span>
+                </div>
+            </div>
+        }
     }
 
     <!-- Child Messages (Recursive) -->
@@ -128,7 +143,7 @@
             @foreach (var childMessage in Message.Children.OrderBy(m => m.CreatedAt))
             {
                 <ChatMessage Message="childMessage"
-                             IsGenerating="false"
+                             IsGenerating="@(childMessage.Status == "generating")"
                              ShowChildren="true"
                              OnRegenerateRequested="OnRegenerateRequested"
                              OnMessageChanged="OnMessageChanged" />
@@ -308,6 +323,8 @@
         font-size: 0.875rem;
         color: #495057;
         overflow-x: auto;
+        white-space: pre;
+        max-width: 100%;
     }
 </style>
 

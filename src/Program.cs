@@ -32,6 +32,8 @@ builder.Services.AddHttpContextAccessor();
 
 // Tools available for the LLMs
 builder.Services.AddTransient<DiceRollTool>();
+builder.Services.AddTransient<AssistantTool>();
+
 
 // Authentication - simple and standard
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)

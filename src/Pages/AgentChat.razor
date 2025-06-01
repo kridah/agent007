@@ -167,9 +167,7 @@
 
     // Root agent configuration - hardcoded for now
     private const string ROOT_AGENT_MODEL = "qwen3:4b";
-    private const string ROOT_AGENT_SYSTEM_MESSAGE = @"You are a helpful AI assistant. You are knowledgeable, professional, and concise in your responses.
-Provide clear and accurate information, and when you're unsure about something, acknowledge the uncertainty.
-Be conversational but maintain a professional tone.";
+    private const string ROOT_AGENT_SYSTEM_MESSAGE = @"You are a helpful assistant that helps the user with routing questions to the correct expert and you try to verify answers by consulting one other expert. You MUST provide all the details needed to the expert in the prompt. The expert does not have access to your context. You should utilize tools multiple times if neccesary or helpful.";
 
     private Agent? rootAgent;
     private Conversation? currentConversation;
@@ -369,8 +367,96 @@ Be conversational but maintain a professional tone.";
             // Create tools for this conversation
             var tools = new IToolInterface[]
             {
-                ServiceProvider.GetRequiredService<DiceRollTool>(),
-                // Add more tools as needed
+                ServiceProvider.GetRequiredService<AssistantTool>()
+                    .Configure(
+                        functionName: "organizer",
+                        toolDescription: "Organize the information into a table, tree or graph",
+                        modelName: "qwen3:4b",
+                        systemMessage: @"You are an assistant who structures the information you receive in a clear, systematic form. Add notes if there appear to be inconsistencies or errors.",
+                        compressResponseMessage: "Double check your result and generate it again please.",
+                        contextLength: 8192,
+                        thinking: true),
+
+                ServiceProvider.GetRequiredService<AssistantTool>()
+                    .Configure(
+                        functionName: "remove_irrelevant",
+                        toolDescription: "Removes definitely irrelevant information from the question",
+                        modelName: "qwen3:4b",
+                        systemMessage: @"You receive a prompt from the user and you remove all the information that is definitely not relevant",
+                        compressResponseMessage: "Generate a shorter version of the information.",
+                        contextLength: 8192,
+                        thinking: true),
+
+                ServiceProvider.GetRequiredService<AssistantTool>()
+                    .Configure(
+                        functionName: "reducer",
+                        toolDescription: "Solves one part of the problem, and returns a new simpler version of the problem along with the partial solution.",
+                        modelName: "qwen3:4b",
+                        systemMessage: @"Solve one part of the problem, and return a new simpler version of the problem along with the partial solution.",
+                        compressResponseMessage: "Double check your result and generate it again please.",
+                        contextLength: 8192,
+                        thinking: true),
+
+                ServiceProvider.GetRequiredService<AssistantTool>()
+                    .Configure(
+                        functionName: "six_thinking_hats",
+                        toolDescription: "Apply Edward de Bono's Six Thinking Hats method for comprehensive analysis",
+                        modelName: "qwen3:4b",
+                        systemMessage: "You are an expert in Edward de Bono's Six Thinking Hats method. Analyze the problem from six distinct perspectives: White Hat (facts and information), Red Hat (emotions and feelings), Black Hat (critical judgment and caution), Yellow Hat (positive assessment), Green Hat (creativity and alternatives), Blue Hat (process control and meta-thinking). Present insights from each hat systematically.",
+                        compressResponseMessage: "Provide a synthesis of the key insights from all six thinking perspectives.",
+                        contextLength: 8192,
+                        thinking: true),
+
+                ServiceProvider.GetRequiredService<AssistantTool>()
+                    .Configure(
+                        functionName: "root_cause_analyst",
+                        toolDescription: "Systematic root cause analysis using the 5 Whys and fishbone diagram approach",
+                        modelName: "qwen3:4b",
+                        systemMessage: "You are a root cause analysis expert. For any problem, apply the '5 Whys' technique by asking 'why' at least five times to drill down to fundamental causes. Also consider the fishbone diagram categories: People, Process, Equipment, Materials, Environment, and Management. Identify multiple potential root causes and prioritize them by likelihood and impact.",
+                        compressResponseMessage: "List the top 2-3 most likely root causes identified.",
+                        contextLength: 8192,
+                        thinking: true),
+
+                ServiceProvider.GetRequiredService<AssistantTool>()
+                    .Configure(
+                        functionName: "math_assistant",
+                        toolDescription: "Rigorous mathematical problem solving with step-by-step verification",
+                        modelName: "qwen3:4b",
+                        systemMessage: "You are a meticulous mathematical assistant. For every problem, work step-by-step with clear logic and no skipped reasoning. Break down equations, explain each transformation, and explicitly state assumptions or simplifications. When solving word problems, first extract and define all relevant quantities and variables before proceeding with calculations. Always verify your final answer by substitution or alternative methods when possible.",
+                        compressResponseMessage: "Please provide the final answer with key formula or method used.",
+                        contextLength: 8192,
+                        thinking: true),
+
+                ServiceProvider.GetRequiredService<AssistantTool>()
+                    .Configure(
+                        functionName: "logic_checker",
+                        toolDescription: "Formal logic analysis and fallacy detection",
+                        modelName: "qwen3:4b",
+                        systemMessage: "You are a logic and critical thinking expert. Analyze arguments for logical structure, validity, and soundness. Identify logical fallacies (ad hominem, straw man, false dichotomy, etc.), check for consistency, and evaluate the strength of evidence. Use formal logic notation when helpful. Always distinguish between valid reasoning and truth of premises.",
+                        compressResponseMessage: "Summarize the logical validity and any major fallacies identified.",
+                        contextLength: 8192,
+                        thinking: true),
+
+                ServiceProvider.GetRequiredService<AssistantTool>()
+                    .Configure(
+                        functionName: "decision_matrix",
+                        toolDescription: "Systematic decision analysis using weighted criteria and scoring",
+                        modelName: "qwen3:4b",
+                        systemMessage: "You are a decision analysis expert. For any choice or decision, help structure the problem by: 1) Clearly defining the decision to be made, 2) Identifying all viable options, 3) Determining relevant criteria for evaluation, 4) Weighting criteria by importance, 5) Scoring each option against each criterion, 6) Calculating weighted scores and ranking options. Always consider both quantitative and qualitative factors, and acknowledge uncertainty.",
+                        compressResponseMessage: "Provide the top-ranked option with key supporting criteria.",
+                        contextLength: 8192,
+                        thinking: true),
+
+                ServiceProvider.GetRequiredService<AssistantTool>()
+                    .Configure(
+                        functionName: "devil_advocate",
+                        toolDescription: "Systematic counter-argument and weakness identification",
+                        modelName: "qwen3:4b",
+                        systemMessage: "You are a devil's advocate expert. For any position, argument, or proposal, systematically challenge it by: identifying unstated assumptions, finding potential counter-evidence, considering alternative explanations, examining edge cases and failure modes, questioning the logic and evidence chain, and presenting the strongest possible opposing viewpoint. Be intellectually honest and fair while being thoroughly critical. Help strengthen arguments by revealing their weakest points.",
+                        compressResponseMessage: "Present the strongest counter-argument and key vulnerabilities identified.",
+                        contextLength: 8192,
+                        thinking: true),
+                
             };
 
             Func<string, Task<Message>> createToolMessageCallback = async (toolName) =>

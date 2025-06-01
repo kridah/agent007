@@ -14,18 +14,21 @@ namespace Agent007.LLM
         private readonly OllamaApiClient _client;
         private readonly string _model;
         private readonly ChatDbContext _dbContext;
+        private readonly int? _contextLength; // null means use default context length
         private bool _isBusy;
         private ILogger<OllamaBackend> _logger;
+       
 
         public string SystemMessage { get; set; }
 
-        public OllamaBackend(OllamaApiClient client, string model, string systemPrompt, ChatDbContext dbContext, ILogger<OllamaBackend> logger)
+        public OllamaBackend(OllamaApiClient client, string model, string systemPrompt, ChatDbContext dbContext, ILogger<OllamaBackend> logger, int? contextLength)
         {
             _client = client;
             _model = model;
             SystemMessage = systemPrompt;
             _dbContext = dbContext;
             _logger = logger;
+            _contextLength = contextLength;
         }
 
         public async Task GenerateAsync(
@@ -75,7 +78,8 @@ namespace Agent007.LLM
                     Model = _model,
                     Messages = chatMessages,
                     Stream = true,
-                    Tools = ollamaTools
+                    Tools = ollamaTools,
+                    Options = _contextLength.HasValue ? new RequestOptions { NumCtx = _contextLength.Value } : null
                 };
 
 

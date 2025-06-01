@@ -12,12 +12,12 @@ namespace Agent007.LLM
             _services = services;
         }
 
-        public ILLMBackend CreateBackend(string backendSpec, string systemPrompt)
+        public ILLMBackend CreateBackend(string backendSpec, string systemPrompt, int? contextLength = null)
         {
             var client = _services.GetRequiredService<OllamaApiClient>();
             var dbContext = _services.GetRequiredService<ChatDbContext>();
             var logger = _services.GetRequiredService<ILogger<OllamaBackend>>();
-            return new OllamaBackend(client, backendSpec, systemPrompt, dbContext, logger);
+            return new OllamaBackend(client, backendSpec, systemPrompt, dbContext, logger: logger, contextLength: contextLength);
         }
     }
 }

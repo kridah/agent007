@@ -106,6 +106,7 @@ namespace Agent007.Models.Chat
             };
 
             Children.Add(childMessage);
+            OnPropertyChanged(nameof(Children)); // Add this line
             return childMessage;
         }
 

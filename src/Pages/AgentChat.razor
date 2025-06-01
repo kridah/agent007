@@ -4,9 +4,11 @@
 @using Agent007.Models.Chat
 @using Agent007.Data
 @using Agent007.Components
+@using Agent007.LLM
 @inject ChatDbContext DbContext
 @inject IJSRuntime JSRuntime
 @inject NavigationManager Navigation
+@inject LLMBackendFactory BackendFactory
 
 <PageTitle>Agent Chat</PageTitle>
 
@@ -111,7 +113,7 @@
     }
 
     .messages-container {
-        background-color: #f8f9fa;        
+        background-color: #f8f9fa;
     }
 
         .messages-container::-webkit-scrollbar {
@@ -161,13 +163,32 @@
 @code {
     [Parameter] public int? ConversationId { get; set; }
 
+    // Root agent configuration - hardcoded for now
+    private const string ROOT_AGENT_MODEL = "qwen3:4b";
+    private const string ROOT_AGENT_SYSTEM_MESSAGE = @"You are a helpful AI assistant. You are knowledgeable, professional, and concise in your responses.
+Provide clear and accurate information, and when you're unsure about something, acknowledge the uncertainty.
+Be conversational but maintain a professional tone.";
+
+    private Agent? rootAgent;
     private Conversation? currentConversation;
     private string currentMessage = string.Empty;
     private bool isProcessing = false;
     private string errorMessage = string.Empty;
+    private CancellationTokenSource? currentGenerationCancellation;
 
     protected override async Task OnInitializedAsync()
     {
+        try
+        {
+            // Initialize the root agent
+            var backend = BackendFactory.CreateBackend(ROOT_AGENT_MODEL, ROOT_AGENT_SYSTEM_MESSAGE);
+            rootAgent = new Agent(backend);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to initialize AI agent: {ex.Message}";
+        }
+
         if (ConversationId.HasValue)
         {
             await LoadConversation(ConversationId.Value);
@@ -193,8 +214,12 @@
     {
         if (firstRender)
         {
+            await ScrollToBottom();
             await FocusInput();
         }
+
+        // Auto-scroll to bottom after render (for new messages)
+        await ScrollToBottom();
     }
 
     private async Task LoadConversation(int conversationId)
@@ -217,7 +242,6 @@
         }
         catch (Exception ex)
         {
-            // Store error message to display in UI instead of using alert during prerendering
             errorMessage = $"Error loading conversation: {ex.Message}";
             StateHasChanged();
         }
@@ -225,6 +249,10 @@
 
     private async Task StartNewConversation()
     {
+        // Cancel any ongoing generation
+        currentGenerationCancellation?.Cancel();
+        currentGenerationCancellation = null;
+
         Navigation.NavigateTo("/chat");
         await FocusInput();
     }
@@ -237,7 +265,7 @@
 
     private async Task SendMessage()
     {
-        if (string.IsNullOrWhiteSpace(currentMessage) || isProcessing)
+        if (string.IsNullOrWhiteSpace(currentMessage) || isProcessing || rootAgent == null)
             return;
 
         try
@@ -274,6 +302,7 @@
 
             DbContext.Messages.Add(userMessage);
             await DbContext.SaveChangesAsync();
+            StateHasChanged();
 
             // Navigate to the conversation URL if it's a new conversation
             if (isNewConversation)
@@ -302,65 +331,132 @@
 
     private async Task GenerateAgentResponse()
     {
-        if (currentConversation == null) return;
+        if (currentConversation == null || rootAgent == null) return;
 
-        // Create and immediately save the generating message to get a real database ID
-        var agentMessage = new Message
+        try
         {
-            ConversationId = currentConversation.Id,
-            Role = "agent",
-            AgentName = "Assistant",
-            Body = "", // Start empty for "thinking" state
-            Status = "generating", // Mark as generating
-            CreatedAt = DateTime.UtcNow
-        };
+            // Create cancellation token for this generation
+            currentGenerationCancellation = new CancellationTokenSource();
+            var cancellationToken = currentGenerationCancellation.Token;
 
-        DbContext.Messages.Add(agentMessage);
-        await DbContext.SaveChangesAsync(); // This assigns the real database ID
+            // Create and immediately save the generating message to get a real database ID
+            var agentMessage = new Message
+            {
+                ConversationId = currentConversation.Id,
+                Role = "assistant",
+                AgentName = "Assistant",
+                Body = "", // Start empty for "thinking" state
+                Status = "generating", // Mark as generating
+                CreatedAt = DateTime.UtcNow
+            };
 
-        var messageId = agentMessage.Id; // We now have the real ID
+            DbContext.Messages.Add(agentMessage);
+            await DbContext.SaveChangesAsync(); // This assigns the real database ID
 
-        // Reload conversation to show the new generating message
-        await LoadConversation(currentConversation.Id);
+            var messageId = agentMessage.Id; // We now have the real ID
 
-        // Get the fresh message using the ID we just saved
-        var freshMessage = currentConversation.Messages.First(m => m.Id == messageId);
+            // Reload conversation to show the new generating message
+            await LoadConversation(currentConversation.Id);
 
-        // Simulate generation delay
-        await Task.Delay(2000);
+            // Get the fresh message using the ID we just saved
+            var freshMessage = currentConversation.Messages.First(m => m.Id == messageId);
 
-        // Simulate streaming content (you'll replace this with OllamaSharp)
-        freshMessage.Body = "This is a simulated response that's being generated...";
-        Console.WriteLine($"First update: ID={freshMessage.Id}, BodyLength={freshMessage.Body.Length}, Status={freshMessage.Status}");
-        await DbContext.SaveChangesAsync();
-        StateHasChanged();
+            // Prepare message history for the agent (only root messages)
+            var messageHistory = GetMessageHistoryForAgent();
 
-        await Task.Delay(1000);
+            // Generate response using the real agent
+            await rootAgent.GenerateAsync(messageHistory, freshMessage, cancellationToken);
 
-        freshMessage.Body += "\n\nThe response continues with more content as it streams in from the LLM.";
-        Console.WriteLine($"Second update: ID={freshMessage.Id}, BodyLength={freshMessage.Body.Length}, Status={freshMessage.Status}");
-        await DbContext.SaveChangesAsync();
-        StateHasChanged();
+            // Save the final state
+            await DbContext.SaveChangesAsync();
+            StateHasChanged();
+        }
+        catch (OperationCanceledException)
+        {
+            // Generation was cancelled - this is expected behavior
+            Console.WriteLine("Agent response generation was cancelled");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error generating response: {ex.Message}";
 
-        // Simulate completion after 2 seconds total
-        await Task.Delay(1000);
+            // Try to find and mark the message as error if it exists
+            if (currentConversation?.Messages?.Any(m => m.Status == "generating") == true)
+            {
+                var errorMessage = currentConversation.Messages.Last(m => m.Status == "generating");
+                errorMessage.Status = "error";
+                errorMessage.Body = $"Error: {ex.Message}";
+                await DbContext.SaveChangesAsync();
+            }
 
-        // Mark as complete
-        freshMessage.Status = "complete";
-        Console.WriteLine($"Completion: ID={freshMessage.Id}, BodyLength={freshMessage.Body.Length}, Status={freshMessage.Status}");
-        await DbContext.SaveChangesAsync();
-        StateHasChanged();
+            StateHasChanged();
+        }
+        finally
+        {
+            currentGenerationCancellation = null;
+        }
+    }
+
+    private List<Message> GetMessageHistoryForAgent()
+    {
+        if (currentConversation?.Messages == null)
+            return new List<Message>();
+
+        // Return only root messages (ParentId == null) in chronological order
+        // Filter out the currently generating message
+        return currentConversation.Messages
+            .Where(m => m.ParentId == null && m.Status != "generating")
+            .OrderBy(m => m.CreatedAt)
+            .ToList();
     }
 
     private async Task HandleRegenerateRequest(Message message)
     {
-        if (JSRuntime is IJSInProcessRuntime)
-            await JSRuntime.InvokeVoidAsync("alert", "Regenerate feature coming soon!");
+        if (isProcessing || rootAgent == null)
+            return;
+
+        try
+        {
+            // Cancel any ongoing generation
+            currentGenerationCancellation?.Cancel();
+
+            // For regeneration, we need to remove all messages after the selected user message
+            // and generate a new response
+            var messagesToRemove = currentConversation?.Messages
+                .Where(m => m.CreatedAt > message.CreatedAt)
+                .ToList();
+
+            if (messagesToRemove?.Any() == true)
+            {
+                DbContext.Messages.RemoveRange(messagesToRemove);
+                await DbContext.SaveChangesAsync();
+                await LoadConversation(currentConversation.Id);
+            }
+
+            // Generate new response
+            await GenerateAgentResponse();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error regenerating response: {ex.Message}";
+            StateHasChanged();
+        }
     }
 
     private async Task HandleMessageChanged(Message message)
     {
-        // Handle message changes if needed - no scrolling here
+        // Handle message changes - save to database when message properties change
+        try
+        {
+            await DbContext.SaveChangesAsync();
+
+            // Auto-scroll when message content changes (streaming updates)
+            await ScrollToBottom();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error saving message changes: {ex.Message}");
+        }
     }
 
     private async Task HandleKeyPress(KeyboardEventArgs e)
@@ -388,6 +484,21 @@
             await JSRuntime.InvokeVoidAsync("eval", "document.getElementById('messageInput')?.focus()");
     }
 
+    private async Task ScrollToBottom()
+    {
+        if (JSRuntime is IJSInProcessRuntime)
+        {
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("scrollMessagesToBottom");
+            }
+            catch
+            {
+                // Fallback if the JS function isn't available yet
+            }
+        }
+    }
+
     private IEnumerable<Message> GetRootMessages()
     {
         if (currentConversation?.Messages == null)
@@ -409,9 +520,20 @@
 
         return title.Length > 50 ? title.Substring(0, 47) + "..." : title;
     }
+
+    public void Dispose()
+    {
+        currentGenerationCancellation?.Cancel();
+        currentGenerationCancellation?.Dispose();
+    }
 }
 
 <script>
+    window.scrollMessagesToBottom = () => {
+        for (const m of document.querySelectorAll('.messages-container')) {
+            m.scrollTop = m.scrollHeight;
+        }
+    }
     if (!window.interactionHandler) {
         window.interactionHandler = function() {
             // scroll any generating message into view

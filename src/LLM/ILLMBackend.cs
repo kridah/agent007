@@ -8,9 +8,8 @@
 
         Task GenerateAsync(
             IEnumerable<Message> history,
-            Message userMessage,
             Message targetAssistantMessage,
+            IEnumerable<IToolInterface>? tools = null,
             CancellationToken cancellationToken = default);
     }
-
 }

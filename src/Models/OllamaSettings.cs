@@ -1,6 +1,9 @@
-namespace src;
-
-public class OllamaSettings
+namespace Agent007.Models
 {
-    public string BaseUrl { get; set; } = "http://localhost:11434";
+    public class OllamaSettings
+    {
+        public string BaseUrl { get; set; } = "http://localhost:11434";
+    }
 }
+
+

@@ -1,191 +1,273 @@
-@page "/ollamamodels"
-@using Microsoft.Extensions.Logging
-@using src.Data
-@inject OllamaService OService
-@using OllamaSharp.Models
+@page "/models/ollama"
+@using Agent007.Models
+@using Agent007.Data
+@using System.Globalization
+@inject IModelRepository ModelRepository
+@inject IJSRuntime JSRuntime
 
 <PageTitle>Ollama Models</PageTitle>
 
-<h2>Installed Models</h2>
-@if (models == null)
-{
-    <p><em>Loading installed models...</em></p>
-}
-else
-{
-    <div class="table-responsive">
-        <table class="table table-striped">
-            <thead>
-                <tr>
-                    <th>Model</th>
-                    <th>Format</th>
-                    <th>Family</th>
-                    <th>Model Size</th>
-                    <th>Parameter Size</th>
-                    <th>Quantization</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var model in models)
-                {
-                    <tr>
-                        <td>@model.Name</td>
-                        <td>@model.Details.Format</td>
-                        <td>@(model.Details.Family ?? "Unknown")</td>
-                        <td>@($"{model.Size / 1000000f:F2} MB")</td>
-                        <td>@(model.Details.ParameterSize)</td>
-                        <td>@(model.Details.QuantizationLevel)</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    </div>
-}
-
-<hr />
-
-<h2>Available Models for Download</h2>
-@if (availableModels == null)
-{
-    <p><em>Loading available models...</em></p>
-
-}
-else
-{
+<div class="container-fluid">
     <div class="row">
-        @foreach (var model in availableModels)
-        {
-            <div class="col-md-6 col-lg-4 mb-4">
-                <div class="card h-100">
-                    <div class="card-header">
-                        <h5 class="mb-0">@model.DisplayName</h5>
-                    </div>
-                    <div class="card-body">
-                        <p>@model.Description</p>
-                        <p><strong>Size:</strong> @model.Size</p>
-                        <p><strong>Model ID:</strong> @model.Name</p>
-                    </div>
-                    <div class="card-footer">
-                        @if (model.IsInstalled)
-                        {
-                            <button class="btn btn-success w-100" disabled>
-                                <i class="oi oi-check"></i> Installed
-                            </button>
-                        }
-                        else if (downloadProgressMap.ContainsKey(model.Name))
-                        {
-                            <div class="text-center">
-                                <div class="progress mb-3">
-                                    <div class="progress-bar progress-bar-striped progress-bar-animated" 
-                                         role="progressbar" 
-                                         style="width: @(downloadProgressMap.TryGetValue(model.Name, out var prog) ? prog : 0)%;" 
-                                         aria-valuenow="@(downloadProgressMap.TryGetValue(model.Name, out var prog2) ? prog2 : 0)" 
-                                         aria-valuemin="0" 
-                                         aria-valuemax="100">
-                                        @(downloadProgressMap.TryGetValue(model.Name, out var prog3) ? prog3 : 0)%
-                                    </div>
-                                </div>
-                                <button class="btn btn-warning w-100" @onclick="() => AbortDownload(model.Name)">
-                                    <i class="oi oi-clock"></i> Cancel Download
-                                </button>
-                            </div>
-                        }
-                        else
-                        {
-                            <button class="btn btn-primary w-100" @onclick="() => DownloadModel(model.Name)">
-                                <i class="oi oi-cloud-download"></i> Download
-                            </button>
-                        }
-                    </div>
+        <div class="col-12">
+            <h1 class="mb-4">Ollama Models</h1>
+
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div class="input-group" style="max-width: 400px;">
+                    <input type="text" class="form-control" placeholder="Enter model name (e.g., llama2, mistral)" @bind="newModelName" @onkeypress="HandleKeyPress">
+                    <button class="btn btn-success" @onclick="DownloadModel" disabled="@(string.IsNullOrWhiteSpace(newModelName) || isDownloading)">
+                        <i class="fas fa-download"></i> Download
+                    </button>
                 </div>
             </div>
-        }
-    </div>
-}
 
-@if (!string.IsNullOrEmpty(statusMessage))
-{
-    <div class="alert @statusAlertClass alert-dismissible fade show mt-3" role="alert">
-        @statusMessage
-        <button type="button" class="btn-close" @onclick="ClearStatusMessage"></button>
+            @if (models == null)
+            {
+                <div class="text-center">
+                    <div class="spinner-border" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Loading models...</p>
+                </div>
+            }
+            else if (!models.Any())
+            {
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i> No models found. Try downloading a model using the input above.
+                </div>
+            }
+            else
+            {
+                <div class="row">
+                    @foreach (var model in models.OrderBy(m => m.Name))
+                    {
+                        <div class="col-12 col-md-6 col-lg-4 mb-4">
+                            <div class="card h-100 @GetCardClass(model.Status)">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <h5 class="card-title mb-0">
+                                        @switch (model.Status)
+                                        {
+                                            case OllamaModel.Statuses.Installed:
+                                                <i class="fas fa-check-circle text-success"></i>
+                                                break;
+                                            case OllamaModel.Statuses.Downloading:
+                                                <i class="fas fa-download text-warning"></i>
+                                                break;
+                                            case OllamaModel.Statuses.NotInstalled:
+                                                <i class="fas fa-circle text-secondary"></i>
+                                                break;
+                                        }
+                                        @model.DisplayName
+                                    </h5>
+                                    @if (model.Status == OllamaModel.Statuses.Installed)
+                                    {
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteModel(model.Name)">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    }
+                                    else if (model.Status == OllamaModel.Statuses.Downloading)
+                                    {
+                                        <button class="btn btn-sm btn-outline-warning" @onclick="() => CancelDownload(model.Name)">
+                                            <i class="fas fa-times"></i> Cancel
+                                        </button>
+                                    }
+                                </div>
+
+                                <div class="card-body">
+                                    <p class="card-text text-muted small">@model.Description</p>
+
+                                    @if (!string.IsNullOrEmpty(model.Size) && model.Size != "Unknown")
+                                    {
+                                        <p class="card-text">
+                                            <small class="text-muted">
+                                                <i class="fas fa-hdd"></i> Size: @model.Size
+                                            </small>
+                                        </p>
+                                    }
+
+                                    @if (model.Status == OllamaModel.Statuses.Downloading)
+                                    {
+                                        <div class="mb-2">
+                                            <div class="progress">
+                                                <div class="progress-bar bg-warning progress-bar-striped progress-bar-animated"
+                                                     role="progressbar"
+                                                     style="width: @(model.DownloadProgress.ToString("F1", CultureInfo.InvariantCulture))%"
+                                                     aria-valuenow="@model.DownloadProgress"
+                                                     aria-valuemin="0"
+                                                     aria-valuemax="100">
+                                                    @($"{model.DownloadProgress:F1}%")
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <p class="card-text">
+                                            <small class="text-warning">
+                                                <i class="fas fa-download"></i> Downloading... @($"{model.DownloadProgress:F1}%")
+                                            </small>
+                                        </p>
+                                    }
+                                </div>
+
+                                <div class="card-footer">
+                                    @switch (model.Status)
+                                    {
+                                        case OllamaModel.Statuses.Installed:
+                                            <span class="badge bg-success">
+                                                <i class="fas fa-check"></i> Installed
+                                            </span>
+                                            break;
+                                        case OllamaModel.Statuses.Downloading:
+                                            <span class="badge bg-warning">
+                                                <i class="fas fa-download"></i> Downloading
+                                            </span>
+                                            break;
+                                        case OllamaModel.Statuses.NotInstalled:
+                                            <span class="badge bg-secondary">
+                                                <i class="fas fa-cloud"></i> Not Installed
+                                            </span>
+                                            break;
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
     </div>
-}
+</div>
 
 @code {
-
-
-
-
-
-
-
-    private IEnumerable<Model> models;
-    private List<AvailableModel> availableModels;
-    private Dictionary<string, CancellationTokenSource> downloadCTS = new();
-    private Dictionary<string, int> downloadProgressMap = new();
-    private string statusMessage = "";
-    private string statusAlertClass = "alert-info";
-    [Inject]
-    private ILogger<OllamaModels> logger { get; set; }
+    private IEnumerable<OllamaModel>? models;
+    private string newModelName = string.Empty;
+    private bool isDownloading = false;
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadData();
+        // Subscribe to events
+        ModelRepository.ModelsChanged += OnModelsChanged;
+        ModelRepository.ModelProgressChanged += OnModelProgressChanged;
+
+        await LoadModels();
     }
 
-    private async Task LoadData()
+    private async Task LoadModels()
     {
         try
         {
-            models = await OService.ListModelsAsync();
-            availableModels = await OService.GetAvailableModelsAsync();
+            models = await ModelRepository.GetAvailableModelsAsync();
             StateHasChanged();
         }
         catch (Exception ex)
         {
-            statusMessage = $"Error loading models: {ex.Message}";
-            statusAlertClass = "alert-danger";
+            await JSRuntime.InvokeVoidAsync("alert", $"Error loading models: {ex.Message}");
         }
     }
 
-    private async Task DownloadModel(string modelName)
+    private async Task RefreshModels()
     {
-        var downloadCts = new CancellationTokenSource();
-        downloadCTS[modelName] = downloadCts;
-        downloadCts.Token.Register(() => {
-            statusMessage = $"Download cancelled for {modelName}.";
-            statusAlertClass = "alert-warning";
-            downloadCTS.Remove(modelName);
-            downloadProgressMap.Remove(modelName);
-            InvokeAsync(StateHasChanged);
-        });
-
-        _ = Task.Run(async () =>
+        try
         {
-            var result = await OService.DownloadModelAsync(modelName, progress =>
-            {
-                if (!downloadCTS.ContainsKey(modelName) || downloadCTS[modelName].IsCancellationRequested)
-                    return; // Don't update progress if cancelled
-
-                downloadProgressMap[modelName] = progress.PercentComplete;
-                InvokeAsync(StateHasChanged);
-            }, downloadCts.Token);
-
-            await LoadData();
-        });
-    }
-
-    private void AbortDownload(string modelName)
-    {
-        if (downloadCTS.TryGetValue(modelName, out var downloadCts))
+            await ModelRepository.RefreshModelsAsync();
+        }
+        catch (Exception ex)
         {
-            logger.LogInformation($"Cancelling download for model: {modelName}");
-            downloadCts.Cancel();
+            await JSRuntime.InvokeVoidAsync("alert", $"Error refreshing models: {ex.Message}");
         }
     }
 
-    private void ClearStatusMessage()
+    private async Task DownloadModel()
     {
-        statusMessage = "";
+        if (string.IsNullOrWhiteSpace(newModelName))
+            return;
+
+        try
+        {
+            isDownloading = true;
+            var progress = new Progress<float>();
+            await ModelRepository.StartDownloadAsync(newModelName.Trim(), progress);
+            newModelName = string.Empty;
+        }
+        catch (OperationCanceledException)
+        {
+            // Download was cancelled, no need to show error
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error downloading model: {ex.Message}");
+        }
+        finally
+        {
+            isDownloading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DeleteModel(string modelName)
+    {
+        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", $"Are you sure you want to delete the model '{modelName}'?");
+        if (!confirmed)
+            return;
+
+        try
+        {
+            await ModelRepository.DeleteModelAsync(modelName);
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error deleting model: {ex.Message}");
+        }
+    }
+
+    private void CancelDownload(string modelName)
+    {
+        try
+        {
+            ModelRepository.CancelDownload(modelName);
+        }
+        catch (Exception ex)
+        {
+            JSRuntime.InvokeVoidAsync("alert", $"Error cancelling download: {ex.Message}");
+        }
+    }
+
+    private async Task HandleKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await DownloadModel();
+        }
+    }
+
+    private void OnModelsChanged(object? sender, ModelsChangedEventArgs e)
+    {
+        InvokeAsync(async () =>
+        {
+            await LoadModels();
+        });
+    }
+
+    private void OnModelProgressChanged(object? sender, ModelProgressEventArgs e)
+    {
+        InvokeAsync(() =>
+        {
+            StateHasChanged();
+        });
+    }
+
+    private string GetCardClass(OllamaModel.Statuses status)
+    {
+        return status switch
+        {
+            OllamaModel.Statuses.Installed => "border-success",
+            OllamaModel.Statuses.Downloading => "border-warning",
+            OllamaModel.Statuses.NotInstalled => "border-secondary",
+            _ => "border-secondary"
+        };
+    }
+
+    public void Dispose()
+    {
+        ModelRepository.ModelsChanged -= OnModelsChanged;
+        ModelRepository.ModelProgressChanged -= OnModelProgressChanged;
     }
 }

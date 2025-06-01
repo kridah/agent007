@@ -1,0 +1,378 @@
+﻿@using Agent007.Models.Chat
+@using System.ComponentModel
+@using Microsoft.JSInterop
+@implements INotifyPropertyChanged
+@implements IDisposable
+@inject IJSRuntime JSRuntime
+
+<div class="chat-message @GetMessageClasses()" data-message-id="@Message.Id">
+    <!-- Message Header -->
+    <div class="message-header d-flex align-items-center mb-2">
+        <div class="message-avatar me-2">
+            @switch (Message.Role.ToLower())
+            {
+                case "user":
+                    <i class="fas fa-user-circle text-primary"></i>
+                    break;
+                case "agent":
+                    <i class="fas fa-robot text-success"></i>
+                    break;
+                case "tool":
+                    <i class="fas fa-cog text-warning"></i>
+                    break;
+                default:
+                    <i class="fas fa-circle text-secondary"></i>
+                    break;
+            }
+        </div>
+
+        <div class="message-info flex-grow-1">
+            <div class="d-flex align-items-center">
+                <strong class="message-role text-capitalize">@Message.Role</strong>
+
+                @if (!string.IsNullOrEmpty(Message.AgentName))
+                {
+                    <span class="badge bg-secondary ms-2">@Message.AgentName</span>
+                }
+
+                <span class="message-status ms-2">
+                    @if (IsGenerating)
+                    {
+                        <span class="badge bg-warning">
+                            <i class="fas fa-stream"></i> Generating
+                        </span>
+                    }
+                    else
+                    {
+                        @switch (Message.Status.ToLower())
+                        {
+                            case "streaming":
+                                <span class="badge bg-warning">
+                                    <i class="fas fa-stream"></i> Streaming
+                                </span>
+                                break;
+                            case "error":
+                                <span class="badge bg-danger">
+                                    <i class="fas fa-exclamation-triangle"></i> Error
+                                </span>
+                                break;
+                            case "complete":
+                                <!-- No status badge for complete messages -->
+                                break;
+                            default:
+                                <span class="badge bg-info">@Message.Status</span>
+                                break;
+                        }
+                    }
+                </span>
+            </div>
+
+            <small class="text-muted message-timestamp">
+                @Message.CreatedAt.ToString("MMM d 'at' h:mm tt")
+            </small>
+        </div>
+
+        <!-- Message Actions -->
+        <div class="message-actions">
+            @if (!IsGenerating && Message.Status == "complete" && Message.Role == "user")
+            {
+                <button type="button" class="btn btn-sm btn-outline-secondary"
+                        @onclick="async () => await OnRegenerateRequested.InvokeAsync(Message)" title="Regenerate response">
+                    <i class="fas fa-redo"></i>
+                </button>
+            }
+
+            @if (!IsGenerating)
+            {
+                <button type="button" class="btn btn-sm btn-outline-secondary"
+                        @onclick="CopyMessage" title="Copy message">
+                    <i class="fas fa-copy"></i>
+                </button>
+            }
+        </div>
+    </div>
+
+    <!-- Message Body -->
+    <div class="message-body">
+        @if (IsGenerating && string.IsNullOrEmpty(Message.Body))
+        {
+            <div class="thinking-indicator d-flex align-items-center">
+                <div class="spinner-border spinner-border-sm me-2" role="status">
+                    <span class="visually-hidden">Thinking...</span>
+                </div>
+                <span class="text-muted">Thinking...</span>
+            </div>
+        }
+        else if (Message.Status == "error")
+        {
+            <div class="error-content alert alert-danger mb-0">
+                <i class="fas fa-exclamation-triangle"></i>
+                @Message.Body
+            </div>
+        }
+        else
+        {
+            <div class="simple-content">
+                <div style="background: yellow; padding: 5px; margin: 5px 0; font-size: 12px;">
+                    DEBUG: ID=@Message.Id, IsGenerating=@IsGenerating, Status=@Message.Status, BodyLength=@(Message.Body?.Length ?? -1)
+                </div>
+                <div style="white-space: pre-wrap;">@Message.Body</div>
+            </div>
+        }
+    </div>
+
+    <!-- Child Messages (Recursive) -->
+    @if (ShowChildren && Message.Children?.Any() == true)
+    {
+        <div class="child-messages mt-3 ms-4 border-start border-2 border-light ps-3">
+            @foreach (var childMessage in Message.Children.OrderBy(m => m.CreatedAt))
+            {
+                <ChatMessage Message="childMessage"
+                             IsGenerating="false"
+                             ShowChildren="true"
+                             OnRegenerateRequested="OnRegenerateRequested"
+                             OnMessageChanged="OnMessageChanged" />
+            }
+        </div>
+    }
+</div>
+
+<style>
+    .chat-message {
+        margin-bottom: 1rem;
+        padding: 1rem;
+        background-color: white;
+        border-radius: 0.5rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        transition: box-shadow 0.2s ease;
+    }
+
+        .chat-message:hover {
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+        }
+
+        .chat-message.user-message {
+            background-color: #e3f2fd;
+            margin-left: 2rem;
+        }
+
+        .chat-message.agent-message {
+            background-color: #f1f8e9;
+            margin-right: 2rem;
+        }
+
+        .chat-message.tool-message {
+            background-color: #fff3e0;
+            border-left: 4px solid #ff9800;
+        }
+
+        .chat-message.error-message {
+            background-color: #ffebee;
+            border-left: 4px solid #f44336;
+        }
+
+    .message-avatar {
+        font-size: 1.5rem;
+    }
+
+    .message-actions {
+        opacity: 0;
+        transition: opacity 0.2s ease;
+    }
+
+    .chat-message:hover .message-actions {
+        opacity: 1;
+    }
+
+    .markdown-content {
+        line-height: 1.6;
+        word-wrap: break-word;
+    }
+
+        .markdown-content pre {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 0.375rem;
+            padding: 1rem;
+            overflow-x: auto;
+            margin: 0.5rem 0;
+        }
+
+        .markdown-content code.inline-code {
+            background-color: #f8f9fa;
+            padding: 0.2rem 0.4rem;
+            border-radius: 0.25rem;
+            font-size: 0.875em;
+            border: 1px solid #e9ecef;
+        }
+
+        .markdown-content blockquote {
+            border-left: 4px solid #dee2e6;
+            padding-left: 1rem;
+            margin: 1rem 0;
+            color: #6c757d;
+        }
+
+        .markdown-content table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 1rem 0;
+        }
+
+        .markdown-content th,
+        .markdown-content td {
+            border: 1px solid #dee2e6;
+            padding: 0.5rem;
+            text-align: left;
+        }
+
+        .markdown-content th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+        }
+
+    .thinking-indicator {
+        padding: 0.5rem 0;
+        color: #6c757d;
+        font-style: italic;
+    }
+
+    @@keyframes blink {
+        0%, 50% {
+            opacity: 1;
+        }
+
+        51%, 100% {
+            opacity: 0;
+        }
+    }
+
+    .child-messages {
+        position: relative;
+    }
+
+        .child-messages::before {
+            content: "";
+            position: absolute;
+            left: -1px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: linear-gradient(to bottom, #dee2e6, transparent);
+        }
+
+    .error-content {
+        border: none !important;
+    }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public Message Message { get; set; } = null!;
+    [Parameter] public bool IsGenerating { get; set; } = false;
+    [Parameter] public bool ShowChildren { get; set; } = true;
+    [Parameter] public EventCallback<Message> OnRegenerateRequested { get; set; }
+    [Parameter] public EventCallback<Message> OnMessageChanged { get; set; }
+
+    private Message? previousMessage;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        Console.WriteLine($"OnAfterRenderAsync: ID={Message.Id}, firstRender={firstRender}, IsGenerating={IsGenerating}, BodyLength={Message.Body?.Length ?? -1}, Status={Message.Status}");
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (previousMessage != Message)
+        {
+            // Unsubscribe from old message
+            if (previousMessage is INotifyPropertyChanged oldNotifyMessage)
+            {
+                oldNotifyMessage.PropertyChanged -= OnMessagePropertyChanged;
+            }
+
+            // Subscribe to new message
+            if (Message is INotifyPropertyChanged newNotifyMessage)
+            {
+                newNotifyMessage.PropertyChanged += OnMessagePropertyChanged;
+            }
+
+            previousMessage = Message;
+        }
+    }
+
+    private async Task RenderMarkdownContent()
+    {
+        if (Message.Status != "error")
+        {
+            Console.WriteLine($"Rendering markdown for message {Message.Id}, body length: {Message.Body?.Length ?? 0}");
+            await JSRuntime.InvokeVoidAsync("MarkdownRenderer.renderMarkdown",
+                $"message-{Message.Id}", Message.Body, IsGenerating);
+        }
+    }
+
+    private void OnMessagePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        Console.WriteLine($"Property changed: {e.PropertyName} for message ID {Message.Id}, new BodyLength={Message.Body?.Length ?? -1}, Status={Message.Status}");
+
+        InvokeAsync(async () =>
+        {
+            StateHasChanged();
+
+            OnMessageChanged.InvokeAsync(Message);
+        });
+    }
+
+    private string GetMessageClasses()
+    {
+        var classes = new List<string> { "chat-message" };
+
+        classes.Add($"{Message.Role.ToLower()}-message");
+
+        if (IsGenerating)
+        {
+            classes.Add("generating-message");
+        }
+
+        if (Message.Status == "error")
+        {
+            classes.Add("error-message");
+        }
+
+        return string.Join(" ", classes);
+    }
+
+    private async Task CopyMessage()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", Message.Body);
+            // TODO: Show toast notification
+        }
+        catch
+        {
+            // Fallback for older browsers
+            await JSRuntime.InvokeVoidAsync("copyToClipboard", Message.Body);
+        }
+    }
+
+    public void Dispose()
+    {
+        if (Message is INotifyPropertyChanged notifyMessage)
+        {
+            notifyMessage.PropertyChanged -= OnMessagePropertyChanged;
+        }
+    }
+}
+
+<script>
+    window.copyToClipboard = (text) => {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+    };
+</script>

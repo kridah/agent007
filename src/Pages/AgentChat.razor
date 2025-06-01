@@ -1,0 +1,459 @@
+﻿@page "/chat"
+@page "/chat/{conversationId:int?}"
+@using Microsoft.EntityFrameworkCore
+@using Agent007.Models.Chat
+@using Agent007.Data
+@using Agent007.Components
+@inject ChatDbContext DbContext
+@inject IJSRuntime JSRuntime
+@inject NavigationManager Navigation
+
+<PageTitle>Agent Chat</PageTitle>
+
+<div class="chat-container d-flex flex-column vh-100">
+    <!-- Chat Header -->
+    <div class="chat-header bg-dark text-white p-3 border-bottom">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h4 class="mb-0">
+                    @if (currentConversation?.Title != null)
+                    {
+                        @currentConversation.Title
+                    }
+                    else
+                    {
+                        <span class="text-muted">New Conversation</span>
+                    }
+                </h4>
+                @if (currentConversation != null)
+                {
+                    <small class="text-muted">Started @currentConversation.CreatedAt.ToString("MMM d, yyyy 'at' h:mm tt")</small>
+                }
+            </div>
+            <div>
+                <button type="button" class="btn btn-outline-light btn-sm me-2" @onclick="StartNewConversation">
+                    <i class="fas fa-plus"></i> New Chat
+                </button>
+                <button type="button" class="btn btn-outline-light btn-sm" @onclick="ShowConversationList">
+                    <i class="fas fa-history"></i> History
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Messages Area -->
+    <div class="messages-container flex-grow-1 overflow-auto p-3" id="messagesContainer">
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="alert alert-danger" role="alert">
+                <i class="fas fa-exclamation-triangle"></i> @errorMessage
+                <button type="button" class="btn-close" @onclick="() => errorMessage = string.Empty"></button>
+            </div>
+        }
+
+        @if (currentConversation?.Messages?.Any() == true)
+        {
+            @foreach (var message in GetRootMessages())
+            {
+                <ChatMessage Message="message"
+                             IsGenerating="@(message.Status == "generating")"
+                             ShowChildren="true"
+                             OnRegenerateRequested="HandleRegenerateRequest"
+                             OnMessageChanged="HandleMessageChanged" />
+            }
+        }
+        else
+        {
+            <div class="empty-chat text-center text-muted py-5">
+                <i class="fas fa-comments fa-3x mb-3 opacity-50"></i>
+                <h5>Start a conversation</h5>
+                <p>Ask a question or give an instruction to get started.</p>
+            </div>
+        }
+    </div>
+
+    <!-- Input Area -->
+    <div class="chat-input bg-light border-top p-3">
+        <div class="input-group">
+            <textarea class="form-control auto-resize"
+                      placeholder="Type your message..."
+                      @bind="currentMessage"
+                      @onkeypress="HandleKeyPress"
+                      @oninput="HandleInput"
+                      rows="1"
+                      style="resize: none; overflow-y: auto; max-height: 50vh;"
+                      disabled="@isProcessing"
+                      id="messageInput"></textarea>
+            <button class="btn btn-primary"
+                    type="button"
+                    @onclick="SendMessage"
+                    disabled="@(isProcessing || string.IsNullOrWhiteSpace(currentMessage))">
+                @if (isProcessing)
+                {
+                    <i class="fas fa-spinner fa-spin"></i>
+                }
+                else
+                {
+                    <i class="fas fa-paper-plane"></i>
+                }
+            </button>
+        </div>
+        <div class="form-text mt-2">
+            Press <kbd>Enter</kbd> to send • <kbd>Shift + Enter</kbd> for new line
+        </div>
+    </div>
+</div>
+
+<style>
+    .chat-container {
+        height: 100vh;
+        max-height: 100vh;
+    }
+
+    .messages-container {
+        background-color: #f8f9fa;        
+    }
+
+        .messages-container::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .messages-container::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        .messages-container::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+
+            .messages-container::-webkit-scrollbar-thumb:hover {
+                background: #a8a8a8;
+            }
+
+    .chat-input textarea {
+        border: 2px solid #dee2e6;
+        transition: border-color 0.15s ease-in-out;
+    }
+
+        .chat-input textarea:focus {
+            border-color: #0d6efd;
+            box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+        }
+
+    .empty-chat {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+
+    kbd {
+        background-color: #6c757d;
+        color: white;
+        padding: 0.2rem 0.4rem;
+        border-radius: 0.25rem;
+        font-size: 0.875em;
+    }
+</style>
+
+@code {
+    [Parameter] public int? ConversationId { get; set; }
+
+    private Conversation? currentConversation;
+    private string currentMessage = string.Empty;
+    private bool isProcessing = false;
+    private string errorMessage = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (ConversationId.HasValue)
+        {
+            await LoadConversation(ConversationId.Value);
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Handle navigation parameter changes
+        if (ConversationId.HasValue && (currentConversation == null || currentConversation.Id != ConversationId.Value))
+        {
+            await LoadConversation(ConversationId.Value);
+        }
+        else if (!ConversationId.HasValue && currentConversation != null)
+        {
+            // Navigated to new chat
+            currentConversation = null;
+            StateHasChanged();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await FocusInput();
+        }
+    }
+
+    private async Task LoadConversation(int conversationId)
+    {
+        try
+        {
+            currentConversation = await DbContext.Conversations
+                .Include(c => c.Messages.OrderBy(m => m.CreatedAt))
+                .ThenInclude(m => m.Children)
+                .FirstOrDefaultAsync(c => c.Id == conversationId);
+
+            if (currentConversation == null)
+            {
+                // Conversation not found, redirect to new chat
+                Navigation.NavigateTo("/chat");
+                return;
+            }
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            // Store error message to display in UI instead of using alert during prerendering
+            errorMessage = $"Error loading conversation: {ex.Message}";
+            StateHasChanged();
+        }
+    }
+
+    private async Task StartNewConversation()
+    {
+        Navigation.NavigateTo("/chat");
+        await FocusInput();
+    }
+
+    private async Task ShowConversationList()
+    {
+        if (JSRuntime is IJSInProcessRuntime)
+            await JSRuntime.InvokeVoidAsync("alert", "Conversation history feature coming soon!");
+    }
+
+    private async Task SendMessage()
+    {
+        if (string.IsNullOrWhiteSpace(currentMessage) || isProcessing)
+            return;
+
+        try
+        {
+            isProcessing = true;
+            var messageText = currentMessage.Trim();
+            currentMessage = string.Empty;
+            StateHasChanged(); // Clear input immediately
+
+            bool isNewConversation = false;
+
+            // Create conversation if it doesn't exist
+            if (currentConversation == null)
+            {
+                currentConversation = new Conversation
+                {
+                    Title = GenerateConversationTitle(messageText),
+                    CreatedAt = DateTime.UtcNow
+                };
+                DbContext.Conversations.Add(currentConversation);
+                await DbContext.SaveChangesAsync();
+                isNewConversation = true;
+            }
+
+            // Add user message
+            var userMessage = new Message
+            {
+                ConversationId = currentConversation.Id,
+                Role = "user",
+                Body = messageText,
+                Status = "complete",
+                CreatedAt = DateTime.UtcNow
+            };
+
+            DbContext.Messages.Add(userMessage);
+            await DbContext.SaveChangesAsync();
+
+            // Navigate to the conversation URL if it's a new conversation
+            if (isNewConversation)
+            {
+                Navigation.NavigateTo($"/chat/{currentConversation.Id}");
+            }
+
+            // Reload conversation with messages to get the navigation properties
+            await LoadConversation(currentConversation.Id);
+
+            // Generate agent response
+            await GenerateAgentResponse();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error sending message: {ex.Message}";
+            StateHasChanged();
+        }
+        finally
+        {
+            isProcessing = false;
+            StateHasChanged();
+            await FocusInput();
+        }
+    }
+
+    private async Task GenerateAgentResponse()
+    {
+        if (currentConversation == null) return;
+
+        // Create and immediately save the generating message to get a real database ID
+        var agentMessage = new Message
+        {
+            ConversationId = currentConversation.Id,
+            Role = "agent",
+            AgentName = "Assistant",
+            Body = "", // Start empty for "thinking" state
+            Status = "generating", // Mark as generating
+            CreatedAt = DateTime.UtcNow
+        };
+
+        DbContext.Messages.Add(agentMessage);
+        await DbContext.SaveChangesAsync(); // This assigns the real database ID
+
+        var messageId = agentMessage.Id; // We now have the real ID
+
+        // Reload conversation to show the new generating message
+        await LoadConversation(currentConversation.Id);
+
+        // Get the fresh message using the ID we just saved
+        var freshMessage = currentConversation.Messages.First(m => m.Id == messageId);
+
+        // Simulate generation delay
+        await Task.Delay(2000);
+
+        // Simulate streaming content (you'll replace this with OllamaSharp)
+        freshMessage.Body = "This is a simulated response that's being generated...";
+        Console.WriteLine($"First update: ID={freshMessage.Id}, BodyLength={freshMessage.Body.Length}, Status={freshMessage.Status}");
+        await DbContext.SaveChangesAsync();
+        StateHasChanged();
+
+        await Task.Delay(1000);
+
+        freshMessage.Body += "\n\nThe response continues with more content as it streams in from the LLM.";
+        Console.WriteLine($"Second update: ID={freshMessage.Id}, BodyLength={freshMessage.Body.Length}, Status={freshMessage.Status}");
+        await DbContext.SaveChangesAsync();
+        StateHasChanged();
+
+        // Simulate completion after 2 seconds total
+        await Task.Delay(1000);
+
+        // Mark as complete
+        freshMessage.Status = "complete";
+        Console.WriteLine($"Completion: ID={freshMessage.Id}, BodyLength={freshMessage.Body.Length}, Status={freshMessage.Status}");
+        await DbContext.SaveChangesAsync();
+        StateHasChanged();
+    }
+
+    private async Task HandleRegenerateRequest(Message message)
+    {
+        if (JSRuntime is IJSInProcessRuntime)
+            await JSRuntime.InvokeVoidAsync("alert", "Regenerate feature coming soon!");
+    }
+
+    private async Task HandleMessageChanged(Message message)
+    {
+        // Handle message changes if needed - no scrolling here
+    }
+
+    private async Task HandleKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            await JSRuntime.InvokeVoidAsync("eval", "event.preventDefault()");
+            await SendMessage();
+        }
+    }
+
+    private async Task HandleInput(ChangeEventArgs e)
+    {
+        var textarea = e.Value?.ToString() ?? string.Empty;
+        currentMessage = textarea;
+
+        // Auto-resize textarea (only if not prerendering)
+        if (JSRuntime is IJSInProcessRuntime)
+            await JSRuntime.InvokeVoidAsync("autoResizeTextarea", "messageInput");
+    }
+
+    private async Task FocusInput()
+    {
+        if (JSRuntime is IJSInProcessRuntime)
+            await JSRuntime.InvokeVoidAsync("eval", "document.getElementById('messageInput')?.focus()");
+    }
+
+    private IEnumerable<Message> GetRootMessages()
+    {
+        if (currentConversation?.Messages == null)
+            return Enumerable.Empty<Message>();
+
+        return currentConversation.Messages
+            .Where(m => m.ParentId == null)
+            .OrderBy(m => m.CreatedAt);
+    }
+
+    private string GenerateConversationTitle(string firstMessage)
+    {
+        // Simple title generation - take first few words
+        var words = firstMessage.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var title = string.Join(" ", words.Take(6));
+
+        if (words.Length > 6)
+            title += "...";
+
+        return title.Length > 50 ? title.Substring(0, 47) + "..." : title;
+    }
+}
+
+<script>
+    if (!window.interactionHandler) {
+        window.interactionHandler = function() {
+            // scroll any generating message into view
+            const generatingMessages = document.querySelectorAll(".generating-message");
+            if (generatingMessages.length > 0) {
+                for (const node of generatingMessages) {
+                    const elRect = node.getBoundingClientRect();
+                    const parentRect = node.parentNode.getBoundingClientRect();
+                    if (elRect.bottom > parentRect.bottom) {
+                        // element is below bottom
+                        node.scrollIntoView({ behavior: 'auto', block: 'end'});
+                    }
+                }
+            }
+
+            requestAnimationFrame(window.interactionHandler);
+        };
+        requestAnimationFrame(window.interactionHandler);
+
+        const fixHeight = (el) => {
+            const offsetHeight = el.offsetHeight;
+            el.style.height = 'auto';
+            el.style.height = `${el.scrollHeight}px`;
+            requestAnimationFrame(() => {
+                const newOffsetHeight = el.offsetHeight;
+                const diff = newOffsetHeight - offsetHeight;
+                if (diff != 0) {
+                    const messages = el.parentElement?.parentElement?.previousElementSibling;
+                    messages.scrollTop += diff;
+                }
+            });
+        };
+
+        ['input', 'change', 'blur'].forEach(eventType => {
+            document.body.addEventListener(eventType, (event) => {
+                console.log("event", eventType, event.target.value);
+                // makes textarea with css class .auto-resize accomodate the content length
+                if (event.target.matches('textarea.auto-resize')) {
+                    fixHeight(event.target);
+                    setTimeout(()=>fixHeight(event.target));
+                }
+            });
+        });
+    }
+</script>

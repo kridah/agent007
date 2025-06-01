@@ -1,6 +1,6 @@
 ﻿@page "/"
+@namespace Agent007.Pages
 @using Microsoft.AspNetCore.Components.Web
-@namespace src.Pages
 @addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
 
 <!DOCTYPE html>
@@ -12,9 +12,16 @@
     <link rel="stylesheet" href="css/bootstrap/bootstrap.min.css" />
     <link rel="stylesheet" href="css/markdown.css" />
     <link href="css/site.css" rel="stylesheet" />
-    <link href="src.styles.css" rel="stylesheet" />
+    <link href="Agent007.styles.css" rel="stylesheet" />
     <link rel="icon" type="image/png" href="favicon.png"/>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/5.1.1/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-csharp.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css">
     <component type="typeof(HeadOutlet)" render-mode="ServerPrerendered" />
+    <script src="/js/markdown.js"></script>
 </head>
 <body>
     <component type="typeof(App)" render-mode="ServerPrerendered" />
@@ -31,5 +38,27 @@
     </div>
 
     <script src="_framework/blazor.server.js"></script>
+    <script>
+        window.submitLoginForm = (userId, username) => {
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = '/login';
+
+            const userIdInput = document.createElement('input');
+            userIdInput.type = 'hidden';
+            userIdInput.name = 'UserId';
+            userIdInput.value = userId;
+
+            const usernameInput = document.createElement('input');
+            usernameInput.type = 'hidden';
+            usernameInput.name = 'Username';
+            usernameInput.value = username;
+
+            form.appendChild(userIdInput);
+            form.appendChild(usernameInput);
+            document.body.appendChild(form);
+            form.submit();
+        };
+    </script>
 </body>
 </html>

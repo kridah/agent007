@@ -1,0 +1,320 @@
+﻿@page "/agents"
+@using Agent007.Models
+@using Agent007.Data
+@using Microsoft.EntityFrameworkCore
+@inject ChatDbContext DbContext
+@inject IModelRepository ModelRepository
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Agent Management</PageTitle>
+<article class="content px-4">
+
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h1>Agent Management</h1>
+                    <button type="button" class="btn btn-primary" @onclick="OpenCreateModal">
+                        <i class="fas fa-plus"></i> Create Agent
+                    </button>
+                </div>
+
+                @if (agents == null)
+                {
+                    <div class="text-center">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Loading agents...</p>
+                    </div>
+                }
+                else if (!agents.Any())
+                {
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> No agents have been created yet. Click "Create Agent" to get started.
+                    </div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Description</th>
+                                    <th>Model</th>
+                                    <th>Created</th>
+                                    <th class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var agent in agents.OrderBy(a => a.Name))
+                                {
+                                    <tr>
+                                        <td>
+                                            <strong>@agent.Name</strong>
+                                        </td>
+                                        <td>
+                                            <span class="text-muted">@agent.Description</span>
+                                        </td>
+                                        <td>
+                                            @if (string.IsNullOrEmpty(agent.ModelName))
+                                            {
+                                                <span class="badge bg-secondary">Default</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge bg-info">@agent.ModelName</span>
+                                            }
+                                        </td>
+                                        <td class="text-muted">
+                                            @agent.CreatedAt.ToString("MMM d, yyyy")
+                                        </td>
+                                        <td class="text-end">
+                                            <button type="button" class="btn btn-sm btn-outline-primary me-2"
+                                                    @onclick="() => OpenEditModal(agent)">
+                                                <i class="fas fa-edit"></i> Edit
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-outline-danger"
+                                                    @onclick="() => DeleteAgent(agent)">
+                                                <i class="fas fa-trash"></i> Delete
+                                            </button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</article>
+
+<!-- Agent Modal -->
+@if (showModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(isEditMode ? "Edit Agent" : "Create Agent")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="alert alert-danger">
+                            <i class="fas fa-exclamation-triangle"></i> @errorMessage
+                        </div>
+                    }
+
+                    <div class="mb-3">
+                        <label for="agentName" class="form-label">Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="agentName" @bind="currentAgent.Name"
+                               placeholder="e.g., code_reviewer, research_assistant">
+                        <div class="form-text">Unique identifier for this agent (used in tool calls)</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="agentDescription" class="form-label">Description <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="agentDescription" @bind="currentAgent.Description"
+                               placeholder="Brief description visible to other agents">
+                        <div class="form-text">This description will be shown to LLMs when they select tools</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="agentModel" class="form-label">Model (Optional)</label>
+                        <select class="form-select" id="agentModel" @bind="currentAgent.ModelName">
+                            <option value="">Use conversation default</option>
+                            @if (availableModels != null)
+                            {
+                                @foreach (var model in availableModels.Where(m => m.Status == OllamaModel.Statuses.Installed))
+                                {
+                                    <option value="@model.Name">@model.Name</option>
+                                }
+                            }
+                        </select>
+                        <div class="form-text">Leave empty to use the same model as the main conversation</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="agentSystemMessage" class="form-label">System Message <span class="text-danger">*</span></label>
+                        <textarea class="form-control" id="agentSystemMessage" @bind="currentAgent.SystemMessage" rows="5"
+                                  placeholder="You are an expert in... Your role is to..."></textarea>
+                        <div class="form-text">Instructions that define this agent's personality and capabilities</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModal">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveAgent" disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                        }
+                        @(isEditMode ? "Update Agent" : "Create Agent")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Agent>? agents;
+    private List<OllamaModel>? availableModels;
+    private bool showModal = false;
+    private bool isEditMode = false;
+    private bool isSaving = false;
+    private Agent currentAgent = new();
+    private string errorMessage = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        try
+        {
+            agents = await DbContext.Agents.OrderBy(a => a.Name).ToListAsync();
+            var models = await ModelRepository.GetAvailableModelsAsync();
+            availableModels = models.ToList();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error loading data: {ex.Message}");
+        }
+    }
+
+    private void OpenCreateModal()
+    {
+        currentAgent = new Agent();
+        isEditMode = false;
+        errorMessage = string.Empty;
+        showModal = true;
+    }
+
+    private void OpenEditModal(Agent agent)
+    {
+        currentAgent = new Agent
+        {
+            Id = agent.Id,
+            Name = agent.Name,
+            Description = agent.Description,
+            SystemMessage = agent.SystemMessage,
+            ModelName = agent.ModelName,
+            CreatedAt = agent.CreatedAt,
+            UpdatedAt = agent.UpdatedAt
+        };
+        isEditMode = true;
+        errorMessage = string.Empty;
+        showModal = true;
+    }
+
+    private void CloseModal()
+    {
+        showModal = false;
+        currentAgent = new();
+        errorMessage = string.Empty;
+    }
+
+    private async Task SaveAgent()
+    {
+        errorMessage = string.Empty;
+
+        // Validation
+        if (string.IsNullOrWhiteSpace(currentAgent.Name))
+        {
+            errorMessage = "Agent name is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(currentAgent.Description))
+        {
+            errorMessage = "Agent description is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(currentAgent.SystemMessage))
+        {
+            errorMessage = "System message is required.";
+            return;
+        }
+
+        // Check for duplicate names
+        var existingAgent = await DbContext.Agents
+            .FirstOrDefaultAsync(a => a.Name == currentAgent.Name && a.Id != currentAgent.Id);
+
+        if (existingAgent != null)
+        {
+            errorMessage = "An agent with this name already exists.";
+            return;
+        }
+
+        try
+        {
+            isSaving = true;
+
+            if (isEditMode)
+            {
+                var agentToUpdate = await DbContext.Agents.FindAsync(currentAgent.Id);
+                if (agentToUpdate != null)
+                {
+                    agentToUpdate.Name = currentAgent.Name.Trim();
+                    agentToUpdate.Description = currentAgent.Description.Trim();
+                    agentToUpdate.SystemMessage = currentAgent.SystemMessage.Trim();
+                    agentToUpdate.ModelName = string.IsNullOrWhiteSpace(currentAgent.ModelName) ? null : currentAgent.ModelName.Trim();
+                    agentToUpdate.UpdatedAt = DateTime.UtcNow;
+                }
+            }
+            else
+            {
+                currentAgent.Name = currentAgent.Name.Trim();
+                currentAgent.Description = currentAgent.Description.Trim();
+                currentAgent.SystemMessage = currentAgent.SystemMessage.Trim();
+                currentAgent.ModelName = string.IsNullOrWhiteSpace(currentAgent.ModelName) ? null : currentAgent.ModelName?.Trim();
+                currentAgent.CreatedAt = DateTime.UtcNow;
+                currentAgent.UpdatedAt = DateTime.UtcNow;
+
+                DbContext.Agents.Add(currentAgent);
+            }
+
+            await DbContext.SaveChangesAsync();
+            await LoadData();
+            CloseModal();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error saving agent: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task DeleteAgent(Agent agent)
+    {
+        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm",
+            $"Are you sure you want to delete the agent '{agent.Name}'? This action cannot be undone.");
+
+        if (!confirmed)
+            return;
+
+        try
+        {
+            DbContext.Agents.Remove(agent);
+            await DbContext.SaveChangesAsync();
+            await LoadData();
+
+            await JSRuntime.InvokeVoidAsync("alert", $"Agent '{agent.Name}' deleted successfully!");
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error deleting agent: {ex.Message}");
+        }
+    }
+}

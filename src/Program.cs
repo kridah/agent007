@@ -1,6 +1,7 @@
 using Agent007.Data;
 using Agent007.LLM;
 using Agent007.Models;
+using Agent007.Tools;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -15,7 +16,7 @@ builder.Services.AddServerSideBlazor();
 builder.Services.Configure<OllamaSettings>(builder.Configuration.GetSection("Ollama"));
 builder.Services.AddSingleton<OllamaService>();
 builder.Services.AddSingleton<IModelRepository, OllamaModelRepository>();
-builder.Services.AddSingleton<LLMBackendFactory>();
+builder.Services.AddScoped<LLMBackendFactory>();
 builder.Services.AddTransient<OllamaApiClient>(sp =>
 {
     var settings = sp.GetRequiredService<IOptions<OllamaSettings>>().Value;
@@ -28,6 +29,9 @@ builder.Services.AddDbContext<ChatDbContext>(options =>
 });
 
 builder.Services.AddHttpContextAccessor();
+
+// Tools available for the LLMs
+builder.Services.AddTransient<DiceRollTool>();
 
 // Authentication - simple and standard
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)

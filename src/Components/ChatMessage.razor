@@ -14,7 +14,7 @@
                 case "user":
                     <i class="fas fa-user-circle text-primary"></i>
                     break;
-                case "agent":
+                case "assistant":
                     <i class="fas fa-robot text-success"></i>
                     break;
                 case "tool":
@@ -92,34 +92,34 @@
         </div>
     </div>
 
-    <!-- Message Body -->
-    <div class="message-body">
-        @if (IsGenerating && string.IsNullOrEmpty(Message.Body))
-        {
-            <div class="thinking-indicator d-flex align-items-center">
-                <div class="spinner-border spinner-border-sm me-2" role="status">
-                    <span class="visually-hidden">Thinking...</span>
+    <!-- Message Body (for non-tool messages OR tool messages without children) -->
+    @if (Message.Role != "tool" || !HasChildMessages())
+    {
+        <div class="message-body">
+            @if (IsGenerating && string.IsNullOrEmpty(Message.Body))
+            {
+                <div class="thinking-indicator d-flex align-items-center">
+                    <div class="spinner-border spinner-border-sm me-2" role="status">
+                        <span class="visually-hidden">Thinking...</span>
+                    </div>
+                    <span class="text-muted">Thinking...</span>
                 </div>
-                <span class="text-muted">Thinking...</span>
-            </div>
-        }
-        else if (Message.Status == "error")
-        {
-            <div class="error-content alert alert-danger mb-0">
-                <i class="fas fa-exclamation-triangle"></i>
-                @Message.Body
-            </div>
-        }
-        else
-        {
-            <div class="simple-content">
-                <div style="background: yellow; padding: 5px; margin: 5px 0; font-size: 12px;">
-                    DEBUG: ID=@Message.Id, IsGenerating=@IsGenerating, Status=@Message.Status, BodyLength=@(Message.Body?.Length ?? -1)
+            }
+            else if (Message.Status == "error")
+            {
+                <div class="error-content alert alert-danger mb-0">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    @Message.Body
                 </div>
-                <div style="white-space: pre-wrap;">@Message.Body</div>
-            </div>
-        }
-    </div>
+            }
+            else
+            {
+                <div class="simple-content">
+                    <div style="white-space: pre-wrap;">@Message.Body</div>
+                </div>
+            }
+        </div>
+    }
 
     <!-- Child Messages (Recursive) -->
     @if (ShowChildren && Message.Children?.Any() == true)
@@ -133,6 +133,31 @@
                              OnRegenerateRequested="OnRegenerateRequested"
                              OnMessageChanged="OnMessageChanged" />
             }
+        </div>
+    }
+
+    <!-- Tool Result (shown AFTER child messages for tool messages) -->
+    @if (Message.Role == "tool" && HasChildMessages() && !string.IsNullOrEmpty(Message.Body))
+    {
+        <div class="tool-result mt-3">
+            <div class="tool-result-header">
+                <small class="text-muted">
+                    <i class="fas fa-code"></i> Tool Result:
+                </small>
+            </div>
+            <div class="tool-result-body">
+                @if (Message.Status == "error")
+                {
+                    <div class="error-content alert alert-danger mb-0">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        @Message.Body
+                    </div>
+                }
+                else
+                {
+                    <pre class="tool-result-content"><code>@Message.Body</code></pre>
+                }
+            </div>
         </div>
     }
 </div>
@@ -156,7 +181,7 @@
             margin-left: 2rem;
         }
 
-        .chat-message.agent-message {
+        .chat-message.assistant-message {
             background-color: #f1f8e9;
             margin-right: 2rem;
         }
@@ -264,6 +289,26 @@
     .error-content {
         border: none !important;
     }
+
+    .tool-result {
+        border-top: 1px solid #dee2e6;
+        padding-top: 0.75rem;
+    }
+
+    .tool-result-header {
+        margin-bottom: 0.5rem;
+    }
+
+    .tool-result-content {
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 0.375rem;
+        padding: 0.75rem;
+        margin: 0;
+        font-size: 0.875rem;
+        color: #495057;
+        overflow-x: auto;
+    }
 </style>
 
 @code {
@@ -277,9 +322,9 @@
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    private bool HasChildMessages()
     {
-        Console.WriteLine($"OnAfterRenderAsync: ID={Message.Id}, firstRender={firstRender}, IsGenerating={IsGenerating}, BodyLength={Message.Body?.Length ?? -1}, Status={Message.Status}");
+        return Message.Children?.Any() == true;
     }
 
     protected override async Task OnParametersSetAsync()
@@ -302,24 +347,11 @@
         }
     }
 
-    private async Task RenderMarkdownContent()
-    {
-        if (Message.Status != "error")
-        {
-            Console.WriteLine($"Rendering markdown for message {Message.Id}, body length: {Message.Body?.Length ?? 0}");
-            await JSRuntime.InvokeVoidAsync("MarkdownRenderer.renderMarkdown",
-                $"message-{Message.Id}", Message.Body, IsGenerating);
-        }
-    }
-
     private void OnMessagePropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        Console.WriteLine($"Property changed: {e.PropertyName} for message ID {Message.Id}, new BodyLength={Message.Body?.Length ?? -1}, Status={Message.Status}");
-
         InvokeAsync(async () =>
         {
             StateHasChanged();
-
             OnMessageChanged.InvokeAsync(Message);
         });
     }

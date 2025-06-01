@@ -1,80 +1,114 @@
 ﻿using OllamaSharp.Models.Chat;
-namespace Agent007.Tools;
-public class DiceRollTool : IToolInterface
+using Agent007.LLM;
+using Agent007.Data;
+using System.Text.Json;
+
+namespace Agent007.Tools
 {
-    private int _lastRoll;
-    private int _lastSides;
-
-    public Tool GetToolDefinition() => new Tool
+    public class DiceRollTool : IToolInterface
     {
-        Function = new Function
+        private readonly ChatDbContext _dbContext;
+        private readonly ILogger<DiceRollTool> _logger;
+
+        public DiceRollTool(ChatDbContext dbContext, ILogger<DiceRollTool> logger)
         {
-            Name = "roll_dice",
-            Description = "Roll a dice with specified number of sides",
-            Parameters = new Parameters
+            _dbContext = dbContext;
+            _logger = logger;
+        }
+
+        public async Task ExecuteAsync(
+            ParamParser parameters,
+            Models.Chat.Message toolResultMessage,
+            CancellationToken cancellationToken = default)
+        {
+            try
             {
-                Type = "object",
-                Properties = new Dictionary<string, Property>
+                // Debug: Let's see what the tool is actually receiving
+                _logger.LogError("=== DICE TOOL DEBUG ===");
+                _logger.LogError("Parameters IsObject: {IsObject}", parameters.IsObject);
+                _logger.LogError("Parameters IsArray: {IsArray}", parameters.IsArray);
+                _logger.LogError("Parameters Count: {Count}", parameters.Count);
+                _logger.LogError("Parameters Keys: [{Keys}]", string.Join(", ", parameters.Keys));
+
+                var sidesItem = parameters.Get("sides");
+                _logger.LogError("sidesItem is null: {IsNull}", sidesItem == null);
+                if (sidesItem != null)
                 {
-                    ["sides"] = new Property
-                    {
-                        Type = "integer",
-                        Description = "Number of sides on the dice",
-                        Default = 6
-                    }
-                },
-                Required = new string[0]
+                    _logger.LogError("sidesItem.HasValue: {HasValue}", sidesItem.HasValue);
+                    _logger.LogError("sidesItem.RawValue: {RawValue}", sidesItem.RawValue);
+                    _logger.LogError("sidesItem.RawValue type: {Type}", sidesItem.RawValue?.GetType());
+                }
+
+                // Parse the sides parameter with fallback to 6
+                var sides = parameters.Get("sides")?.AsInt() ?? 6;
+                _logger.LogError("Final sides value: {Sides}", sides);
+
+                // Perform the dice roll
+                var roll = Random.Shared.Next(1, sides + 1);
+
+                // Add user message (tool request)
+                var userMessage = toolResultMessage.AddMessage("user", $"Please roll the {sides}-sided dice for me");
+
+                // Save user message to database
+                _dbContext.Messages.Add(userMessage);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+
+                // Add agent message (tool response)
+                var agentMessage = toolResultMessage.AddMessage("assistant", $"🎲 Rolled the {sides}-sided dice and got {roll}");
+
+                // Save agent message to database
+                _dbContext.Messages.Add(agentMessage);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+
+                // Set the final result for the LLM (JSON format)
+                toolResultMessage.Body = JsonSerializer.Serialize(new
+                {
+                    roll = roll,
+                    sides = sides
+                });
             }
-        },
-        Type = "function"
-    };
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "DiceRollTool Error: {Message}", ex.Message);
 
-    public async Task ExecuteAsync(
-        IDictionary<string, object?> parameters,
-        Agent007.Models.Chat.Message toolMessage,
-        CancellationToken cancellationToken = default)
-    {
-        // Parse parameters
-        _lastSides = parameters.ContainsKey("sides") && parameters["sides"] != null
-            ? Convert.ToInt32(parameters["sides"])
-            : 6;
+                // Handle errors gracefully
+                var errorMessage = toolResultMessage.AddMessage("agent", "DiceRoller");
+                errorMessage.Body = $"❌ Error rolling dice: {ex.Message}";
+                errorMessage.Status = "error";
 
-        // Perform the dice roll
-        _lastRoll = Random.Shared.Next(1, _lastSides + 1);
+                _dbContext.Messages.Add(errorMessage);
+                await _dbContext.SaveChangesAsync(cancellationToken);
 
-        // Create the tool conversation thread
+                toolResultMessage.Body = JsonSerializer.Serialize(new
+                {
+                    error = ex.Message,
+                    status = "failed"
+                });
+                toolResultMessage.Status = "error";
+            }
+        }
 
-        // 1. User message (dice tool is acting as user requesting the roll)
-        var userMessage = new Agent007.Models.Chat.Message
+        public Tool GetToolDefinition() => new Tool
         {
-            ConversationId = toolMessage.ConversationId,
-            ParentId = toolMessage.Id,
-            Role = "user",
-            AgentName = "DiceTool",
-            Body = $"Requested to roll a {_lastSides}-sided dice",
-            Status = "complete",
-            CreatedAt = DateTime.UtcNow
+            Function = new Function
+            {
+                Name = "roll_dice",
+                Description = "Roll a dice with specified number of sides",
+                Parameters = new Parameters
+                {
+                    Type = "object",
+                    Properties = new Dictionary<string, Property>
+                    {
+                        ["sides"] = new Property
+                        {
+                            Type = "integer",
+                            Description = "Number of sides on the dice (default: 6)"
+                        }
+                    },
+                    Required = new string[0] // sides is optional
+                }
+            },
+            Type = "function"
         };
-
-        // 2. Agent message (dice tool responding with result)
-        var agentMessage = new Agent007.Models.Chat.Message
-        {
-            ConversationId = toolMessage.ConversationId,
-            ParentId = toolMessage.Id,
-            Role = "agent",
-            AgentName = "DiceTool",
-            Body = $"The dice rolled {_lastRoll}",
-            Status = "complete",
-            CreatedAt = DateTime.UtcNow.AddMilliseconds(1) // Ensure ordering
-        };
-
-        // Add the conversation thread to the tool message
-        toolMessage.Children.Add(userMessage);
-        toolMessage.Children.Add(agentMessage);
-    }
-
-    public string GetLLMResult()
-    {
-        return _lastRoll.ToString();
     }
 }

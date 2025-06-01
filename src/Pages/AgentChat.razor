@@ -5,6 +5,8 @@
 @using Agent007.Data
 @using Agent007.Components
 @using Agent007.LLM
+@using Agent007.Tools
+@inject IServiceProvider ServiceProvider
 @inject ChatDbContext DbContext
 @inject IJSRuntime JSRuntime
 @inject NavigationManager Navigation
@@ -364,8 +366,36 @@ Be conversational but maintain a professional tone.";
             // Prepare message history for the agent (only root messages)
             var messageHistory = GetMessageHistoryForAgent();
 
-            // Generate response using the real agent
-            await rootAgent.GenerateAsync(messageHistory, freshMessage, cancellationToken);
+            // Create tools for this conversation
+            var tools = new IToolInterface[]
+            {
+                ServiceProvider.GetRequiredService<DiceRollTool>(),
+                // Add more tools as needed
+            };
+
+            Func<string, Task<Message>> createToolMessageCallback = async (toolName) =>
+            {
+                var toolMessage = new Message
+                {
+                    ConversationId = currentConversation.Id,
+                    Role = "tool",
+                    AgentName = toolName,
+                    Body = "",
+                    Status = "generating",
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                DbContext.Messages.Add(toolMessage);
+                await DbContext.SaveChangesAsync();
+
+                // Reload conversation to include the new message
+                await LoadConversation(currentConversation.Id);
+
+                return currentConversation.Messages.First(m => m.Id == toolMessage.Id);
+            };
+
+            // Generate response using the real agent with tools
+            await rootAgent.GenerateAsync(messageHistory, freshMessage, tools, createToolMessageCallback, cancellationToken);
 
             // Save the final state
             await DbContext.SaveChangesAsync();

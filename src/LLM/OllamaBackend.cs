@@ -1,4 +1,4 @@
-﻿using Agent007.Tools;
+﻿using Agent007.Data;
 using OllamaSharp;
 using OllamaSharp.Models;
 using OllamaSharp.Models.Chat;
@@ -13,21 +13,26 @@ namespace Agent007.LLM
     {
         private readonly OllamaApiClient _client;
         private readonly string _model;
+        private readonly ChatDbContext _dbContext;
         private bool _isBusy;
+        private ILogger<OllamaBackend> _logger;
 
         public string SystemMessage { get; set; }
 
-        public OllamaBackend(OllamaApiClient client, string model, string systemPrompt)
+        public OllamaBackend(OllamaApiClient client, string model, string systemPrompt, ChatDbContext dbContext, ILogger<OllamaBackend> logger)
         {
             _client = client;
             _model = model;
             SystemMessage = systemPrompt;
+            _dbContext = dbContext;
+            _logger = logger;
         }
 
         public async Task GenerateAsync(
             IEnumerable<Message> history,
-            Message userMessage,
             Message targetAssistantMessage,
+            IEnumerable<IToolInterface>? tools = null,
+            Func<string, Task<Message>>? createToolMessageCallback = null,
             CancellationToken cancellationToken = default)
         {
             if (_isBusy)
@@ -52,6 +57,7 @@ namespace Agent007.LLM
                     });
                 }
 
+                // Add all history messages (including the latest user message)
                 foreach (var msg in history)
                 {
                     chatMessages.Add(new OllamaSharp.Models.Chat.Message
@@ -61,28 +67,21 @@ namespace Agent007.LLM
                     });
                 }
 
-                chatMessages.Add(new OllamaSharp.Models.Chat.Message
-                {
-                    Role = userMessage.Role,
-                    Content = userMessage.Body
-                });
-
-                // Create tool instances for the request
-                var tools = new object[]
-                {
-                    new RollDiceTool()
-                };
+                // Convert tools to OllamaSharp format
+                var ollamaTools = tools?.Select(tool => tool.GetToolDefinition()).ToArray();
 
                 var request = new ChatRequest
                 {
                     Model = _model,
                     Messages = chatMessages,
                     Stream = true,
-                    Tools = tools // Add tools to the original working approach
+                    Tools = ollamaTools
                 };
 
-                var responseMessage = new OllamaSharp.Models.Chat.Message();
+
                 var toolCalls = new List<ToolCall>();
+                var toolLookup = tools?.ToDictionary(t => t.GetToolDefinition().Function.Name, t => t)
+                    ?? new Dictionary<string, IToolInterface>();
 
                 await foreach (var chunk in _client.ChatAsync(request, cancellationToken))
                 {
@@ -98,36 +97,15 @@ namespace Agent007.LLM
                     }
                 }
 
-                // If there were tool calls, execute them and continue the conversation
-                if (toolCalls.Any())
-                {
-                    targetAssistantMessage.Body += "\n\n[Executing tools...]";
 
-                    // Execute tools and create child messages
-                    foreach (var toolCall in toolCalls)
-                    {
-                        var toolResult = await ExecuteTool(toolCall);
-
-                        // Create child message for tool execution
-                        var toolMessage = new Message
-                        {
-                            ConversationId = targetAssistantMessage.ConversationId,
-                            ParentId = targetAssistantMessage.Id,
-                            Role = "tool",
-                            AgentName = toolCall.Function?.Name ?? "Unknown Tool",
-                            Body = toolResult,
-                            Status = "complete",
-                            CreatedAt = DateTime.UtcNow
-                        };
-
-                        targetAssistantMessage.Children.Add(toolMessage);
-                    }
-
-                    // Continue conversation with tool results
-                    await ContinueWithToolResults(chatMessages, toolCalls, targetAssistantMessage, cancellationToken);
-                }
-
+                // Mark the assistant message as complete (it now contains the function call)
                 targetAssistantMessage.Status = "complete";
+
+                // If there were tool calls, execute them and continue the conversation
+                if (toolCalls.Any() && createToolMessageCallback != null)
+                {
+                    await ExecuteToolsWithCallback(toolCalls, toolLookup, chatMessages, createToolMessageCallback, cancellationToken);
+                }
             }
             finally
             {
@@ -135,52 +113,219 @@ namespace Agent007.LLM
             }
         }
 
-        private async Task<string> ExecuteTool(ToolCall toolCall)
-        {
-            try
-            {
-                if (toolCall?.Function == null)
-                    return "Error: Invalid tool call";
-
-                var functionName = toolCall.Function.Name;
-                var args = toolCall.Function.Arguments;
-
-                return functionName switch
-                {
-                    "RollDice" => ExecuteRollDice(args),
-                    _ => $"Error: Unknown tool '{functionName}'"
-                };
-            }
-            catch (Exception ex)
-            {
-                return $"Error executing tool: {ex.Message}";
-            }
-        }
-
-        private string ExecuteRollDice(IDictionary<string, object?>? args)
-        {
-            var sides = 6;
-
-            if (args != null && args.ContainsKey("sides") && int.TryParse(args["sides"]?.ToString(), out var sidesVal))
-                sides = sidesVal;
-
-            var result = Random.Shared.Next(1, sides + 1);
-            return $"Rolled {sides}-sided dice: {result}";
-        }
-
-        private async Task ContinueWithToolResults(
-            List<OllamaSharp.Models.Chat.Message> chatMessages,
+        private async Task ExecuteToolsWithCallback(
             List<ToolCall> toolCalls,
-            Message targetAssistantMessage,
+            Dictionary<string, IToolInterface> toolLookup,
+            List<OllamaSharp.Models.Chat.Message> chatMessages,
+            Func<string, Task<Message>> createToolMessageCallback,
             CancellationToken cancellationToken)
         {
-            // Add tool results to the conversation
+            var toolResults = new List<string>();
+
             foreach (var toolCall in toolCalls)
+            {
+                try
+                {
+                    if (toolCall?.Function == null)
+                    {
+                        toolResults.Add("Error: Invalid tool call");
+                        continue;
+                    }
+
+                    var functionName = toolCall.Function.Name;
+
+                    if (!toolLookup.TryGetValue(functionName, out var tool))
+                    {
+                        toolResults.Add($"Error: Unknown tool '{functionName}'");
+                        continue;
+                    }
+
+                    // Use callback to create tool message at root level
+                    var toolMessage = await createToolMessageCallback(functionName);
+
+                    // Debug: Log the raw arguments to understand the structure
+                    _logger.LogWarning("=== TOOL CALL DEBUG ===");
+                    _logger.LogWarning("Raw toolCall.Function.Arguments: {Args}",
+                                     System.Text.Json.JsonSerializer.Serialize(toolCall.Function.Arguments));
+                    _logger.LogWarning("Arguments type: {Type}", toolCall.Function.Arguments?.GetType());
+
+                    // Parse the tool call arguments properly
+                    var toolCallParser = new Tools.ParamParser(toolCall.Function.Arguments);
+
+                    // If the arguments are nested under an "arguments" key, extract them
+                    // Otherwise, use the arguments directly
+                    var argumentsParser = toolCallParser.ContainsKey("arguments")
+                        ? toolCallParser.Get("arguments")?.AsObject()
+                        : toolCallParser;
+
+                    // Debug: Show what the tool will actually receive
+                    _logger.LogWarning("Tool will receive - sides value: {Sides}",
+                                     argumentsParser?.Get("sides")?.AsInt() ?? -1);
+
+                    // Execute the tool
+                    await tool.ExecuteAsync(
+                        argumentsParser ?? new Tools.ParamParser(null),
+                        toolMessage,
+                        cancellationToken);
+
+                    // Tool should have set toolMessage.Body with the result
+                    toolResults.Add(toolMessage.Body);
+
+                    // Update the tool message status and save
+                    toolMessage.Status = "complete";
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    var errorResult = $"Error executing tool: {ex.Message}";
+                    toolResults.Add(errorResult);
+
+                    // Create error tool message at root level
+                    var errorMessage = await createToolMessageCallback(toolCall.Function?.Name ?? "Unknown");
+                    errorMessage.Body = errorResult;
+                    errorMessage.Status = "error";
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                }
+            }
+
+            // Add tool results to chat history for LLM context
+            foreach (var result in toolResults)
             {
                 chatMessages.Add(new OllamaSharp.Models.Chat.Message
                 {
                     Role = "tool",
-                    Content = await ExecuteTool(toolCall)
+                    Content = result
+                });
+            }
+
+            // Create a new assistant message for the follow-up response
+            var followUpMessage = await createToolMessageCallback("Assistant");
+            followUpMessage.Role = "assistant";
+            followUpMessage.Status = "generating";
+            followUpMessage.Body = string.Empty;
+
+            // Continue the conversation with tool results
+            var followUpRequest = new ChatRequest
+            {
+                Model = _model,
+                Messages = chatMessages,
+                Stream = true
+            };
+
+            await foreach (var chunk in _client.ChatAsync(followUpRequest, cancellationToken))
+            {
+                if (chunk?.Message?.Content is { Length: > 0 } content)
+                {
+                    followUpMessage.Body += content;
+                }
+            }
+
+            followUpMessage.Status = "complete";
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        // Keep the old method for backward compatibility, but mark it as obsolete
+        [Obsolete("Use the overload with createToolMessageCallback parameter")]
+        private async Task ExecuteTools(
+            List<ToolCall> toolCalls,
+            Dictionary<string, IToolInterface> toolLookup,
+            Message targetAssistantMessage,
+            List<OllamaSharp.Models.Chat.Message> chatMessages,
+            CancellationToken cancellationToken)
+        {
+            // Old implementation for backward compatibility
+            var toolResults = new List<string>();
+
+            foreach (var toolCall in toolCalls)
+            {
+                try
+                {
+                    if (toolCall?.Function == null)
+                    {
+                        toolResults.Add("Error: Invalid tool call");
+                        continue;
+                    }
+
+                    var functionName = toolCall.Function.Name;
+
+                    if (!toolLookup.TryGetValue(functionName, out var tool))
+                    {
+                        toolResults.Add($"Error: Unknown tool '{functionName}'");
+                        continue;
+                    }
+
+                    // Create tool result message and save it to database
+                    var toolMessage = new Message
+                    {
+                        ConversationId = targetAssistantMessage.ConversationId,
+                        ParentId = targetAssistantMessage.Id,
+                        Role = "tool",
+                        AgentName = functionName,
+                        Body = "", // Starts empty (shows spinner in UI)
+                        Status = "generating",
+                        CreatedAt = DateTime.UtcNow
+                    };
+
+                    // Save the tool message to database first (so it has an ID)
+                    _dbContext.Messages.Add(toolMessage);
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+
+                    // Add to parent's children collection
+                    targetAssistantMessage.Children.Add(toolMessage);
+
+                    // Execute the tool
+                    await tool.ExecuteAsync(
+                        new Tools.ParamParser(toolCall.Function.Arguments),
+                        toolMessage,
+                        cancellationToken);
+
+                    // Tool should have set toolMessage.Body with the result
+                    toolResults.Add(toolMessage.Body);
+
+                    // Update the tool message status and save
+                    toolMessage.Status = "complete";
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    var errorResult = $"Error executing tool: {ex.Message}";
+                    toolResults.Add(errorResult);
+
+                    // Create error tool message
+                    var errorMessage = new Message
+                    {
+                        ConversationId = targetAssistantMessage.ConversationId,
+                        ParentId = targetAssistantMessage.Id,
+                        Role = "tool",
+                        AgentName = toolCall.Function?.Name ?? "Unknown",
+                        Body = errorResult,
+                        Status = "error",
+                        CreatedAt = DateTime.UtcNow
+                    };
+
+                    _dbContext.Messages.Add(errorMessage);
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                    targetAssistantMessage.Children.Add(errorMessage);
+                }
+            }
+
+            // Continue conversation with tool results
+            await ContinueWithToolResults(chatMessages, toolResults, targetAssistantMessage, cancellationToken);
+        }
+
+        private async Task ContinueWithToolResults(
+            List<OllamaSharp.Models.Chat.Message> chatMessages,
+            List<string> toolResults,
+            Message targetAssistantMessage,
+            CancellationToken cancellationToken)
+        {
+            // Add tool results to the conversation for the LLM to see
+            foreach (var result in toolResults)
+            {
+                chatMessages.Add(new OllamaSharp.Models.Chat.Message
+                {
+                    Role = "tool",
+                    Content = result
                 });
             }
 

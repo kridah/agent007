@@ -10,6 +10,7 @@
             IEnumerable<Message> history,
             Message targetAssistantMessage,
             IEnumerable<IToolInterface>? tools = null,
+            Func<string, Task<Message>>? createToolMessageCallback = null,
             CancellationToken cancellationToken = default);
     }
 }

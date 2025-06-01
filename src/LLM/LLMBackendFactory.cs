@@ -1,4 +1,5 @@
 ﻿using OllamaSharp;
+using Agent007.Data;
 
 namespace Agent007.LLM
 {
@@ -14,8 +15,9 @@ namespace Agent007.LLM
         public ILLMBackend CreateBackend(string backendSpec, string systemPrompt)
         {
             var client = _services.GetRequiredService<OllamaApiClient>();
-            return new OllamaBackend(client, backendSpec, systemPrompt);
+            var dbContext = _services.GetRequiredService<ChatDbContext>();
+            var logger = _services.GetRequiredService<ILogger<OllamaBackend>>();
+            return new OllamaBackend(client, backendSpec, systemPrompt, dbContext, logger);
         }
     }
-
 }

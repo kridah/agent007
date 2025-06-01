@@ -17,15 +17,14 @@
             set => _backend.SystemMessage = value;
         }
 
+        // In Agent.cs
         public async Task GenerateAsync(
             List<Message> messageHistory,
             Message assistantMessage,
-            CancellationToken cancellationToken = default)
-        {
-            var lastUserMessage = messageHistory.LastOrDefault(m => m.Role == "user")
-                ?? throw new InvalidOperationException("No user message found to respond to.");
-
-            await _backend.GenerateAsync(messageHistory, lastUserMessage, assistantMessage, cancellationToken);
-        }
+            IEnumerable<IToolInterface>? tools = null,
+            Func<string, Task<Message>>? createToolMessageCallback = null,
+            CancellationToken cancellationToken = default) 
+            =>
+            await _backend.GenerateAsync(messageHistory, assistantMessage, tools, createToolMessageCallback, cancellationToken);
     }
 }

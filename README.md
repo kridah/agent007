@@ -2,7 +2,7 @@
 
 With license to invoke other agents :)
 
-[Watch the demo](recording.mp4)
+[Watch the demo](recording.mp4) (download the raw video to watch)
 
 
 ---

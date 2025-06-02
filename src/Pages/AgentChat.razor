@@ -57,14 +57,17 @@
 
         @if (currentConversation?.Messages?.Any() == true)
         {
-            @foreach (var message in GetRootMessages())
-            {
-                <ChatMessage Message="message"
-                             IsGenerating="@(message.Status == "generating")"
-                             ShowChildren="true"
-                             OnRegenerateRequested="HandleRegenerateRequest"
-                             OnMessageChanged="HandleMessageChanged" />
-            }
+            <div class="messages-list">
+                @foreach (var message in GetRootMessages())
+                {
+                    <ChatMessage Message="message"
+                                 IsGenerating="@(message.Status == "generating")"
+                                 ShowChildren="true"
+                                 NestingDepth="0"
+                                 OnRegenerateRequested="HandleRegenerateRequest"
+                                 OnMessageChanged="HandleMessageChanged" />
+                }
+            </div>
         }
         else
         {
@@ -116,6 +119,11 @@
 
     .messages-container {
         background-color: #f8f9fa;
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        overflow-x: hidden; /* Prevent horizontal scroll */
+        overflow-y: auto; /* Allow vertical scroll */
     }
 
         .messages-container::-webkit-scrollbar {
@@ -134,6 +142,15 @@
             .messages-container::-webkit-scrollbar-thumb:hover {
                 background: #a8a8a8;
             }
+
+    .messages-list {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        gap: 0.5rem;
+        /* Ensure messages container takes full width available */
+        min-width: 0;
+    }
 
     .chat-input textarea {
         border: 2px solid #dee2e6;
@@ -457,7 +474,7 @@
                         compressResponseMessage: "Present the strongest counter-argument and key vulnerabilities identified.",
                         contextLength: 8192,
                         thinking: true),
-                
+
             };
 
             Func<string, Task<Message>> createToolMessageCallback = async (toolName) =>

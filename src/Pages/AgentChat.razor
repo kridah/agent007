@@ -367,6 +367,7 @@
             // Create tools for this conversation
             var tools = new IToolInterface[]
             {
+                ServiceProvider.GetRequiredService<DiceRollTool>(),
                 ServiceProvider.GetRequiredService<AssistantTool>()
                     .Configure(
                         functionName: "organizer",

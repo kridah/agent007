@@ -23,21 +23,8 @@ namespace Agent007.Tools
         {
             try
             {
-                // Debug: Let's see what the tool is actually receiving
-                _logger.LogError("=== DICE TOOL DEBUG ===");
-                _logger.LogError("Parameters IsObject: {IsObject}", parameters.IsObject);
-                _logger.LogError("Parameters IsArray: {IsArray}", parameters.IsArray);
-                _logger.LogError("Parameters Count: {Count}", parameters.Count);
-                _logger.LogError("Parameters Keys: [{Keys}]", string.Join(", ", parameters.Keys));
 
                 var sidesItem = parameters.Get("sides");
-                _logger.LogError("sidesItem is null: {IsNull}", sidesItem == null);
-                if (sidesItem != null)
-                {
-                    _logger.LogError("sidesItem.HasValue: {HasValue}", sidesItem.HasValue);
-                    _logger.LogError("sidesItem.RawValue: {RawValue}", sidesItem.RawValue);
-                    _logger.LogError("sidesItem.RawValue type: {Type}", sidesItem.RawValue?.GetType());
-                }
 
                 // Parse the sides parameter with fallback to 6
                 var sides = parameters.Get("sides")?.AsInt() ?? 6;
@@ -50,14 +37,14 @@ namespace Agent007.Tools
                 var userMessage = toolResultMessage.AddMessage("user", $"Please roll the {sides}-sided dice for me");
 
                 // Save user message to database
-                _dbContext.Messages.Add(userMessage);
+                //_dbContext.Messages.Add(userMessage);
                 await _dbContext.SaveChangesAsync(cancellationToken);
 
                 // Add agent message (tool response)
                 var agentMessage = toolResultMessage.AddMessage("assistant", $"🎲 Rolled the {sides}-sided dice and got {roll}");
 
                 // Save agent message to database
-                _dbContext.Messages.Add(agentMessage);
+                //_dbContext.Messages.Add(agentMessage);
                 await _dbContext.SaveChangesAsync(cancellationToken);
 
                 // Set the final result for the LLM (JSON format)
@@ -76,7 +63,7 @@ namespace Agent007.Tools
                 errorMessage.Body = $"❌ Error rolling dice: {ex.Message}";
                 errorMessage.Status = "error";
 
-                _dbContext.Messages.Add(errorMessage);
+                //_dbContext.Messages.Add(errorMessage);
                 await _dbContext.SaveChangesAsync(cancellationToken);
 
                 toolResultMessage.Body = JsonSerializer.Serialize(new

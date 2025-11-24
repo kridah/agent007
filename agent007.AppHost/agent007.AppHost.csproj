@@ -1,0 +1,19 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.0.0">
+
+  <ItemGroup>
+    <ProjectReference Include="..\src\Agent007.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>03fd31e8-3558-4ac6-b142-4805f5a5ba96</UserSecretsId>
+  </PropertyGroup>
+
+<ItemGroup>
+  <PackageReference Include="CommunityToolkit.Aspire.Hosting.Ollama" Version="13.0.0-beta.456" />
+  <PackageReference Include="CommunityToolkit.Aspire.Hosting.SQLite" Version="*" />
+</ItemGroup>
+</Project>

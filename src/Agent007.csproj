@@ -4,7 +4,7 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>12</LangVersion>
+    <LangVersion>13</LangVersion>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -12,7 +12,7 @@
   </PropertyGroup>	
 	
   <ItemGroup>
-    <ProjectReference Include="../ServiceDefaults/ServiceDefaults.csproj" />
+    <ProjectReference Include="..\agent007.ServiceDefaults\agent007.ServiceDefaults.csproj" />
   </ItemGroup>
 
   <ItemGroup>
